@@ -7,10 +7,6 @@ The current supply interacts with the next parent chains:
 - [ ] ethereum
 - [ ] aeternity
 
-<p align="center">
-  <img src="/HyperchainsConnectorsComponent.png">
-</p>
-
 ###### Developers guide
 Each intersted developer can implement their own parent chain connector. Hyperchains operates via the next listed interface:
 
@@ -34,3 +30,7 @@ Each intersted developer can implement their own parent chain connector. Hyperch
 %% Perform delegate readiness check:
 -callback dry_send_tx(binary(), binary(), binary()) -> ok.
 ```
+
+<p align="center">
+  <img src="/HyperchainsConnectorsComponent.png">
+</p>
