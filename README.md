@@ -7,8 +7,11 @@ The current supply interacts with the next parent chains:
 - [ ] ethereum
 - [ ] aeternity
 
-###### Developers guide
+<p align="center">
+  <img src="/HyperchainsConnectorsComponent.png">
+</p>
 
+###### Developers guide
 Each intersted developer can implement their own parent chain connector. Hyperchains operates via the next listed interface:
 
 
