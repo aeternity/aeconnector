@@ -1,0 +1,2 @@
+-module(aeconnector_protocol).
+-export([]).
