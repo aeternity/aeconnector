@@ -53,5 +53,5 @@ Each intersted developer can implement their own parent chain connector. Hyperch
 > Connector's developer is responsible to provide authorization of the commitments list
 
 <p align="center">
-  <img src="/HyperchainsConnectorsComponent.png">
+  <img src="/doc/src/HyperchainsConnectorsComponent.png">
 </p>
