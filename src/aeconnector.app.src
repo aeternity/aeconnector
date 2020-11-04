@@ -1,0 +1,14 @@
+%% -*- mode: erlang; erlang-indent-level: 4; indent-tabs-mode: nil -*-
+{application, aeconnector,
+  [
+    {description, "Parent chains interface provider (Hyperchains)"},
+    {vsn, "0.0.1"},
+    {registered, []},
+    {applications, [kernel, stdlib]},
+    {mod,{aeconnector_app,[]}},
+    {env,[]},
+    {modules, []},
+    {maintainers, []},
+    {licenses, []},
+    {links, []}
+  ]}.
