@@ -1,0 +1,19 @@
+{"1.2.0",
+[{<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.9">>},1},
+ {<<"jsx">>,
+  {git,"https://github.com/talentdeficit/jsx.git",
+       {ref,"7c7a69c167aecd241a6676ab7e5a7665c782b976"}},
+  0},
+ {<<"lager">>,
+  {git,"https://github.com/aeternity/lager.git",
+       {ref,"9d97ae33acd82fcf1f6772e9937e6fbbcbfae6a6"}},
+  0},
+ {<<"yamerl">>,{pkg,<<"yamerl">>,<<"0.7.0">>},0}]}.
+[
+{pkg_hash,[
+ {<<"goldrush">>, <<"F06E5D5F1277DA5C413E84D5A2924174182FB108DABB39D5EC548B27424CD106">>},
+ {<<"yamerl">>, <<"E51DBA652DCE74C20A88294130B48051EBBBB0BE7D76F22DE064F0F3CCF0AAF5">>}]},
+{pkg_hash_ext,[
+ {<<"goldrush">>, <<"99CB4128CFFCB3227581E5D4D803D5413FA643F4EB96523F77D9E6937D994CEB">>},
+ {<<"yamerl">>, <<"CB5A4481E2E2AD36DB83BD9962153E1A9208E2B2484185E33FC2CAAC6A50B108">>}]}
+].

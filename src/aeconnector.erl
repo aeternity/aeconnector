@@ -21,11 +21,11 @@
 
 -callback connect(map(), function()) -> {ok, pid()} | {error, term()}.
 
--callback send_tx(binary(), binary(), binary()) -> ok.
+-callback send_tx(binary(), binary()) -> ok.
 -callback get_top_block() -> block().
 -callback get_block_by_hash(binary()) -> block().
 
--callback dry_send_tx(binary(), binary(), binary()) -> ok.
+-callback dry_send_tx(binary(), binary()) -> ok.
 
 -callback disconnect() -> ok.
 
@@ -60,12 +60,12 @@ parent_block(Height, Hash, PrevHash, Commitments) when
 %%%  Parent chain interface
 %%%===================================================================
 
--spec send_tx(connector(), binary(), binary(), binary()) -> ok | {error, {term(), term()}}.
-send_tx(Con, Delegate, Commitment, PoGF) ->
+-spec send_tx(connector(), binary(), binary()) -> ok | {error, {term(), term()}}.
+send_tx(Con, Delegate, Commitment) ->
   try
 
     %% Con:send_tx(Delegate, Commitment);
-    ok = Con:send_tx(Delegate, Commitment, PoGF)
+    ok = Con:send_tx(Delegate, Commitment)
   catch E:R ->
     {error, {E, R}}
   end.

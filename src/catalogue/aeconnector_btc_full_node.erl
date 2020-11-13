@@ -1,83 +1,243 @@
 %%% -*- erlang-indent-level: 4 -*-
 %%%-------------------------------------------------------------------
+%%% @copyright (C) 2020, Aeternity Anstalt
+%%% @doc
+
+%%% @end
 -module(aeconnector_btc_full_node).
 
 -behaviour(aeconnector).
--behaviour(gen_server).
+-behaviour(gen_statem).
 
 %% API.
--export([start_link/1]).
+-export([connect/2]).
+-export([send_tx/2, dry_send_tx/2]).
+-export([get_top_block/0, get_block_by_hash/1]).
+-export([disconnect/0]).
 
-%% gen_server.
+%% gen_statem.
 -export([init/1]).
--export([handle_call/3]).
--export([handle_cast/2]).
--export([handle_info/2]).
--export([terminate/2]).
-
--export([send_tx/3, get_block_by_hash/1, get_top_block/0, dry_send_tx/3]).
-
-%% API.
-
--spec start_link(Args::term()) ->
-  {ok, pid()} | ingnore | {error, term()}.
-start_link(Args) ->
-  gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
+-export([terminate/3]).
+-export([callback_mode/0]).
 
 %%%===================================================================
-%%%  aehc_connector behaviour
+%%%  aeconnector behaviour
 %%%===================================================================
 
--spec send_tx(binary(), binary(), binary()) -> ok.
-send_tx(Delegate, Commitment, PoGF) ->
-  gen_server:call(?MODULE, {send_tx, Delegate, Commitment, PoGF}).
+-spec connect(map(), function()) -> {ok, pid()} | {error, term()}.
+connect(Args, Callback) when is_map(Args), is_function(Callback)  ->
+  User = maps:get(<<"user">>, Args),
+  Password = maps:get(<<"password">>, Args),
+  Host = maps:get(<<"host">>, Args, <<"127.0.0.1">>),
+  Port = maps:get(<<"port">>, Args, 8332),
+  SSL = maps:get(<<"ssl">>, Args, false),
+  Timeout = maps:get(<<"timeout">>, Args, 30000),
+  ConTimeout = maps:get(<<"connect_timeout">>, Args, 3000),
+  AutoRedirect = maps:get(<<"autoredirect">>, Args, true),
+  URL = url(Host, Port, SSL),
+  Auth = auth(User, Password),
+  Serial = 0,
+  Seed = erlang:md5(term_to_binary({Serial, node(), make_ref()})),
+  Data = #data{
+      auth = Auth,
+      url = URL,
+      serial = Serial,
+      seed = Seed,
+      callback = Callback,
+      timeout = Timeout,
+      connect_timeout = ConTimeout,
+      autoredirect = AutoRedirect
+    },
+  gen_statem:start_link({local, ?MODULE}, ?MODULE, Data, []).
 
--spec get_top_block() -> aehc_parent_block:parent_block().
+-spec send_tx(binary(), binary()) -> ok.
+send_tx(Delegate, Commitment) ->
+  gen_statem:call(?MODULE, {send_tx, Delegate, Commitment}).
+
+-spec get_top_block() -> {ok, aeconnector:block()} | {error, term()}.
 get_top_block() ->
-  gen_server:call(?MODULE, {get_top_block}).
+  gen_statem:call(?MODULE, {get_top_block}).
 
--spec get_block_by_hash(binary()) -> aehc_parent_block:parent_block().
+-spec get_block_by_hash(binary()) -> {ok, aeconnector:block()} | {error, term()}.
 get_block_by_hash(Hash) ->
-  gen_server:call(?MODULE, {get_block_by_hash, Hash}).
+  gen_statem:call(?MODULE, {get_block_by_hash, Hash}).
 
--spec dry_send_tx(binary(), binary(), binary()) -> ok.
-dry_send_tx(Delegate, Commitment, PoGF) ->
-  gen_server:call(?MODULE, {dry_send_tx, Delegate, Commitment, PoGF}).
+-spec dry_send_tx(binary(), binary()) -> ok.
+dry_send_tx(Delegate, Commitment) ->
+  gen_statem:call(?MODULE, {dry_send_tx, Delegate, Commitment}).
+
+-spec disconnect() -> ok.
+disconnect() ->
+  gen_statem:stop(?MODULE).
 
 %%%===================================================================
-%%%  gen_server behaviour
+%%%  gen_statem behaviour
 %%%===================================================================
 
--record(state, { stub::boolean() }).
+-record(data, {
+    %% RPC auth (bitcoin.conf)
+    auth::list(),
+    %% RPC url (bitcoin.conf)
+    url::list(),
+    %% RPC serial
+    serial::non_neg_integer(),
+    %% RPC seed
+    seed::binary(),
+    %% New mained block anouncement
+    callback::function(),
+    %% The current top block hash
+    top::binary(),
+    %% The current commitment hash
+    tx::binary(),
+    %% Request timeout
+    timeout::integer(),
+    %% Established connection timeout
+    connect_timeout::integer(),
+    %% Allowed redirect
+    autoredirect::boolean()
+  }).
 
-init(Args) ->
-  %% Stub mode allows to pass acceptance procedure without parent node (only for dev purpouses);
-  Stub = maps:get(<<"stub">>, Args, false),
-  process_flag(trap_exit, true),
-  {ok, #state{ stub = Stub }}.
+-type data() :: #data{}.
 
-handle_call({send_tx, _Delegate, _Commitment, _PoGF}, _From, #state{ stub = true} = State) ->
-  {reply, ok, State};
+init(Data) ->
+  %% TODO: to perform get top and info reqs;
+  %% getblockchaininfo, getnetworkinfo, and getwalletinfo
+  {ok, connected, Data, []}.
 
-handle_call({get_top_block}, _From, #state{ stub = true} = State) ->
-  {reply, stub_block(), State};
+callback_mode() ->
+  [state_functions, state_enter].
 
-handle_call({get_block_by_hash, _Hash}, _From, #state{ stub = true} = State) ->
-  {reply, stub_block(), State};
-
-handle_call({dry_send_tx, Delegate, Commitment, PoGF}, _From, #state{ stub = true} = State) ->
-  lager:info("~p: ~p = dry_send_tx(~p, ~p, ~p)", [?MODULE, ok, Delegate, Commitment, PoGF]),
-  {reply, ok, State}.
-
-handle_cast(_Msg, State) ->
-  {noreply, State}.
-
-handle_info(_Info, State) ->
-  {noreply, State}.
-
-terminate(_Reason, _State) ->
+terminate(_Reason, _State, _Data) ->
   ok.
 
-stub_block() ->
-  Header = aehc_parent_block:new_header(<<"Hash">>, <<"PrevHash">>, 1000),
-  aehc_parent_block:new_block(Header, []).
+%%%===================================================================
+%%%  State machine callbacks
+%%%===================================================================
+
+connected(enter, _OldState, Data) ->
+  {keep_state, Data};
+
+connected(call, {send_tx, Delegate, Commitment}, Data) ->
+  Seed = seed(Data),
+  Rpc = rpc(Method, Params, _Id = base64:encode(Seed)),
+  request(Rpc, Data),
+  {keep_state, Data, [postpone]}.
+
+confirmed(enter, _OldState, Data) ->
+  {next_state, connected, Data}.
+
+updated(enter, _OldState, Data) ->
+  {next_state, connected, Data}.
+
+disconnected(enter, _OldState, Data) ->
+  {keep_state, Data};
+
+disconnected(_, _, Data) ->
+  {keep_state, Data, [postpone]}.
+
+%%%===================================================================
+%%%  Data access layer
+%%%===================================================================
+
+-spec auth(data()) -> binary().
+auth(Data) ->
+  Data#data.auth.
+
+-spec timeout(data()) -> integer().
+timeout(Data) ->
+  Data#data.timeout.
+
+-spec connect_timeout(data()) -> integer().
+connect_timeout(Data) ->
+  Data#data.connect_timeout.
+
+-spec autoredirect(data()) -> boolean().
+autoredirect(Data) ->
+  Data#data.autoredirect.
+
+-spec url(data()) -> binary().
+url(Data) ->
+  Data#data.url.
+
+-spec seed(data()) -> binary().
+seed(Data) ->
+  Data#data.seed.
+
+-spec callback(data()) -> function().
+callback(Data) ->
+  Data#data.callback.
+
+-spec top(data()) -> binary().
+top(Data) ->
+  Data#data.top.
+
+-spec top(data(), binary()) -> data().
+top(Data, Top) ->
+  Data#data{top = Top}.
+
+-spec tx(data()) -> binary().
+tx(Data) ->
+  Data#data.tx.
+
+-spec tx(data(), binary()) -> data().
+tx(Data, Tx) ->
+  Data#data{tx = Tx}.
+
+%%%===================================================================
+%%%  HTTP protocol
+%%%===================================================================
+
+url(Host, Port, true = SSL) when is_list(Host), is_integer(Port) ->
+  path("https://", Host, Port);
+url(Host, Port, _) when is_list(Host), is_integer(Port) ->
+  path("http://", Host, Port).
+
+path(Scheme, Host, Port) ->
+  lists:concat([Scheme, Host, ":", Port, "/"]).
+
+-spec request() -> {ok}.
+request(Rpc, Data) ->
+  try
+    Auth = auth(Data),
+    Url = url(Data),
+    Body = jsx:encode(Rpc),
+    Headers = [
+        {"Authorization", lists:concat(["Basic ", Auth])}
+      ],
+    Req = {Url, Headers, "application/json", Body},
+    HTTPOpt = [
+        {timeout, timeout(Data)},
+        {connect_timeout, connect_timeout(Data)},
+        {autoredirect, autoredirect(Data)}
+      ],
+    Opt = [],
+    {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
+    lager:debug("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
+    {ok, jsx:decode(Res)}
+  catch E:R:S ->
+    lager:error("Req: ~p, Error: ~p Reason: ~p Stacktrace", [Req, E, R, S]),
+    {error, {E, R}}
+  end.
+
+%%%===================================================================
+%%%  BTC protocol
+%%%===================================================================
+
+-spec auth(binary(), binary()) -> list().
+auth(User, Password) ->
+  base64:encode_to_string(lists:concat([User, ":", Password])).
+
+-spec rpc(binary(), list(), binary()) ->
+  {ok, map()} | {error, term()}.
+rpc(Method, Params, Id) ->
+  rpc(Method, Params, Id, <<"2.0">>).
+
+-spec rpc(binary(), list(), binary(), binary()) ->
+  {ok, map()} | {error, term()}.
+rpc(Method, Params, Id, Version) ->
+    #{
+      <<"jsonrpc">> => Version,
+      <<"method">> => Method,
+      <<"params">> => Params,
+      <<"id">> => Id
+    }.
