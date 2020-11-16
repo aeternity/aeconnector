@@ -3,25 +3,20 @@
 -module(aeconnector).
 
 -export([dry_send_tx/3, send_tx/3, is_signed/3, get_block_by_hash/2, get_top_block/1]).
--export([tx/2, block/4]).
 
 -type connector() :: atom().
 
--record(tx, { account::binary(), payload::binary() }).
--record(block, { hash::binary(), prev_hash::binary(), height::binary(), txs::list(tx()) }).
-
--type tx() :: #tx{}.
--type block() :: #block{}.
+-type block() :: aeconnector_block:block().
 
 -callback connect(map(), function()) -> {ok, pid()} | {error, term()}.
 
 -callback is_signed(binary(), binary()) -> boolean().
 
--callback send_tx(binary(), binary()) -> ok.
--callback get_top_block() -> block().
--callback get_block_by_hash(binary()) -> block().
-
 -callback dry_send_tx(binary(), binary()) -> ok.
+-callback send_tx(binary(), binary()) -> ok.
+
+-callback get_top_block() -> {ok, binary()} | {error, term()}.
+-callback get_block_by_hash(binary()) -> {ok, block()} | {error, term()}.
 
 -callback disconnect() -> ok.
 
@@ -55,7 +50,7 @@ is_signed(Con, Account, Payload) ->
     {error, {E, R}}
   end.
 
--spec get_top_block(connector()) -> {ok, block()} | {error, term()}.
+-spec get_top_block(connector()) -> {ok, binary()} | {error, term()}.
 get_top_block(Con) ->
   try
     Res = Con:get_top_block(),
@@ -73,16 +68,3 @@ get_block_by_hash(Con, Hash) ->
     {error, {E, R}}
   end.
 
-%%%===================================================================
-%%%  Protocol
-%%%===================================================================
-
--spec tx(Account::binary(), Payload::binary()) -> tx().
-tx(Account, Payload)
-  when is_binary(Account), is_binary(Payload) ->
-  #tx{ account = Account, payload = Payload}.
-
--spec block(Height::non_neg_integer(), Hash::binary(), PrevHash::binary(), Txs::[tx()]) -> block().
-block(Height, Hash, PrevHash, Txs) when
-  is_integer(Height), is_binary(Hash), is_binary(PrevHash), is_list(Txs) ->
-  #block{ height = Height, hash = Hash, prev_hash = PrevHash, txs = Txs}.

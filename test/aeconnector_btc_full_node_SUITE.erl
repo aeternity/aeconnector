@@ -11,6 +11,9 @@
 
 -export([connect/0, connect/1]).
 -export([dry_send_tx/0, dry_send_tx/1, send_tx/0, send_tx/1]).
+-export([get_top_block/0, get_top_block/1]).
+-export([get_block_by_hash/0, get_block_by_hash/1]).
+-export([is_signed/0, is_signed/1]).
 -export([disconnect/0, disconnect/1]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -23,7 +26,12 @@ suite() ->
   [{timetrap,{minutes,1}}].
 
 init_per_suite(Config) ->
-  [{delegate, <<"TEST">>}|Config].
+  ok = lager:start(),
+  %% TODO: This data should be externally configured!
+  Delegate = <<"TEST">>,
+  GenesisHash = <<"0000000068d9d45579eeaf657ac6b446d8ec072a40b9cf7c0d566d57e20c5148">>,
+  Setup = [{delegate, Delegate}, {genesis_hash, GenesisHash}],
+  lists:append(Setup, Config).
 
 end_per_suite(_Config) ->
   ok.
@@ -35,7 +43,6 @@ end_per_group(_GroupName, _Config) ->
   ok.
 
 init_per_testcase(_TestCase, Config) ->
-  ok = lager:start(),
   Config.
 
 end_per_testcase(_TestCase, _Config) ->
@@ -64,10 +71,9 @@ end_per_testcase(_TestCase, _Config) ->
 %%--------------------------------------------------------------------
 groups() ->
   [
-    {commit, [], [connect,  disconnect]}
-%%    {commit, [], [connect, dry_send_tx, send_tx, disconnect]}
-%%    {fetch, [sequence], [get_top_block, get_block_by_hash]},
-%%    {transition, [sequence], []}
+    {user, [sequence], [connect, get_top_block, get_block_by_hash, disconnect]}
+%%    {user, [sequence], [connect, get_top_block, get_block_by_hash, is_signed, disconnect]},
+%%    {delegate, [sequence], [connect, dry_send_tx, send_tx, disconnect]}
   ].
 
 %%--------------------------------------------------------------------
@@ -85,7 +91,7 @@ groups() ->
 %%              are to be executed.
 %%--------------------------------------------------------------------
 all() ->
-  [{group, commit}].
+  [{group, user}].
 
 %%--------------------------------------------------------------------
 %% TEST CASES
@@ -110,6 +116,7 @@ connect() ->
 %%              the all/0 list or in a test case group for the test case
 %%              to be executed).
 %%--------------------------------------------------------------------
+
 connect(_Config) ->
   Args = #{
     <<"user">> => <<"hyperchains">>,
@@ -123,7 +130,28 @@ connect(_Config) ->
     <<"autoredirect">> => true
   },
   Callback = fun (_Con, Block) -> ct:log(info, "~nMined block: ~p~n", [Block]) end,
-  {ok, _Pid} = aeconnector_btc_full_node:connect(Args, Callback),
+  {ok, Pid} = aeconnector_btc_full_node:connect(Args, Callback),
+  {comment, Pid}.
+
+get_top_block() ->
+  [].
+
+get_top_block(_Config) ->
+  {ok, Hash} = aeconnector_btc_full_node:get_top_block(), true = is_binary(Hash),
+  {comment, Hash}.
+
+get_block_by_hash() ->
+  [].
+
+get_block_by_hash(Config) ->
+  Hash = ?config(genesis_hash, Config),
+  {ok, Block} = aeconnector_btc_full_node:get_block_by_hash(Hash),
+  {comment, Block}.
+
+is_signed() ->
+  [].
+
+is_signed(_Config) ->
   ok.
 
 dry_send_tx() ->

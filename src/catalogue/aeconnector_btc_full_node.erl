@@ -24,6 +24,8 @@
 %% transitions
 -export([connected/3, confirmed/3, updated/3, disconnected/3]).
 
+-type block() :: aeconnector_block:block().
+
 %%%===================================================================
 %%%  aeconnector behaviour
 %%%===================================================================
@@ -45,11 +47,11 @@ send_tx(Account, Payload) ->
 is_signed(Account, Payload) ->
   gen_statem:call(?MODULE, {is_signed, Account, Payload}).
 
--spec get_top_block() -> {ok, aeconnector:block()} | {error, term()}.
+-spec get_top_block() -> {ok, binary()} | {error, term()}.
 get_top_block() ->
   gen_statem:call(?MODULE, {get_top_block}).
 
--spec get_block_by_hash(binary()) -> {ok, aeconnector:block()} | {error, term()}.
+-spec get_block_by_hash(binary()) -> {ok, block()} | {error, term()}.
 get_block_by_hash(Hash) ->
   gen_statem:call(?MODULE, {get_block_by_hash, Hash}).
 
@@ -90,11 +92,10 @@ disconnect() ->
 init(Data) ->
   %% TODO: to perform get top and info reqs;
   %% getblockchaininfo, getnetworkinfo, and getwalletinfo
-  Seed = seed(Data),
-  Rpc = rpc(<<"getblockchaininfo">>, [], _Id = base64:encode(Seed)),
-  {ok, Res} = request(Rpc, Data),
-  ct:log("~nBTC network: ~p~n", [Res]),
-  {ok, connected, Data, []}.
+  %% TODO: pruneblockchain at height of genesis;
+  {ok, Res, DataUp} = request(<<"getblockchaininfo">>, [], Data),
+  lager:debug("~nBTC network: ~p~n", [Res]),
+  {ok, connected, DataUp, []}.
 
 callback_mode() ->
   [state_functions, state_enter].
@@ -107,13 +108,21 @@ terminate(_Reason, _State, _Data) ->
 %%%===================================================================
 
 connected(enter, _OldState, Data) ->
-  {keep_state, Data};
+  {ok, _Response, DataUp} = request(<<"getbestblockhash">>, [], Data),
+  _Top = top(Data),
+  {keep_state, DataUp};
 
-connected(call, {send_tx, _Account, _Payload}, Data) ->
-  _Seed = seed(Data),
-  %Rpc = rpc(Method, Params, _Id = base64:encode(Seed)),
-  %request(Rpc, Data),
-  {keep_state, Data, [postpone]}.
+connected({call, From}, {get_top_block}, Data) ->
+  {ok, Response, DataUp} = request(<<"getbestblockhash">>, [], Data),
+  Reply = top_block(Response),
+  ok = gen_statem:reply(From, {ok, Reply}),
+  {keep_state, DataUp, []};
+
+connected({call, From}, {get_block_by_hash, Hash}, Data) ->
+  {ok, Response, DataUp} = request(<<"getblock">>, [Hash, _Verbosity = 2], Data),
+  Reply = block(Response),
+  ok = gen_statem:reply(From, {ok, Reply}),
+  {keep_state, DataUp, []}.
 
 confirmed(enter, _OldState, Data) ->
   %% TODO: To supply HTTP callback for miner;
@@ -182,13 +191,17 @@ url(Data) ->
 seed(Data) ->
   Data#data.seed.
 
+-spec seed(data(), binary()) -> data().
+seed(Data, Seed) ->
+  Data#data{ seed = Seed }.
+
 %%-spec callback(data()) -> function().
 %%callback(Data) ->
 %%  Data#data.callback.
 
-%%-spec top(data()) -> binary().
-%%top(Data) ->
-%%  Data#data.top.
+-spec top(data()) -> binary().
+top(Data) ->
+  Data#data.top.
 
 %%-spec top(data(), binary()) -> data().
 %%top(Data, Top) ->
@@ -203,7 +216,7 @@ seed(Data) ->
 %%  Data#data{tx = Tx}.
 
 %%%===================================================================
-%%%  HTTP protocol
+%%%  BTC protocol
 %%%===================================================================
 
 url(Host, Port, true = _SSL) when is_list(Host), is_integer(Port) ->
@@ -214,9 +227,13 @@ url(Host, Port, _) when is_list(Host), is_integer(Port) ->
 path(Scheme, Host, Port) ->
   lists:concat([Scheme, Host, ":", Port, "/"]).
 
--spec request(map(), data()) -> {ok, map()} | {error, term()}.
-request(Rpc, Data) ->
+-spec request(binary(), list(), data()) -> {ok, map(), data()} | {error, term(), data()}.
+request(Method, Params, Data) ->
+  Seed = seed(Data),
+  %% TODO: Inc seed;
+  DataUp = seed(Data, Seed),
   try
+    Rpc = rpc(Method, Params, _Id = base64:encode(Seed)),
     Auth = auth(Data),
     Url = url(Data),
     Body = jsx:encode(Rpc),
@@ -231,16 +248,12 @@ request(Rpc, Data) ->
       ],
     Opt = [],
     {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
-    ct:log("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
-    {ok, jsx:decode(list_to_binary(Res))}
+    lager:debug("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
+    {ok, jsx:decode(list_to_binary(Res)), DataUp}
   catch E:R:S ->
-    ct:log("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
-    {error, {E, R, S}}
+    lager:error("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
+    {error, {E, R, S}, DataUp}
   end.
-
-%%%===================================================================
-%%%  BTC protocol
-%%%===================================================================
 
 -spec auth(binary(), binary()) -> list().
 auth(User, Password) ->
@@ -260,3 +273,27 @@ rpc(Method, Params, Id, Version) ->
       <<"params">> => Params,
       <<"id">> => Id
     }.
+
+%%%===================================================================
+%%%  HC protocol
+%%%===================================================================
+
+-spec top_block(map()) -> binary().
+top_block(Response) ->
+  maps:get(<<"result">>, Response).
+
+-spec block(map()) -> block().
+block(Response) ->
+  Result = maps:get(<<"result">>, Response),
+  Hash = maps:get(<<"hash">>, Result),
+  Height = maps:get(<<"height">>, Result),
+  PrevHash = maps:get(<<"previousblockhash">>, Result),
+  %% TODO: To analyze the size field;
+  Txs = [
+    begin
+      Vin = maps:get(<<"vin">>, Tx),
+      Vout = maps:get(<<"vout">>, Tx),
+      %% TODO: To extract Tx data;
+      aeconnector_tx:test_tx(Vin, Vout) end|| Tx <- maps:get(<<"tx">>, Result)
+  ],
+  aeconnector_block:block(Height, Hash, PrevHash, Txs).
