@@ -12,6 +12,7 @@
 %% API.
 -export([connect/2]).
 -export([send_tx/2, dry_send_tx/2]).
+-export([is_signed/2]).
 -export([get_top_block/0, get_block_by_hash/1]).
 -export([disconnect/0]).
 
@@ -20,39 +21,29 @@
 -export([terminate/3]).
 -export([callback_mode/0]).
 
+%% transitions
+-export([connected/3, confirmed/3, updated/3, disconnected/3]).
+
 %%%===================================================================
 %%%  aeconnector behaviour
 %%%===================================================================
 
 -spec connect(map(), function()) -> {ok, pid()} | {error, term()}.
-connect(Args, Callback) when is_map(Args), is_function(Callback)  ->
-  User = maps:get(<<"user">>, Args),
-  Password = maps:get(<<"password">>, Args),
-  Host = maps:get(<<"host">>, Args, <<"127.0.0.1">>),
-  Port = maps:get(<<"port">>, Args, 8332),
-  SSL = maps:get(<<"ssl">>, Args, false),
-  Timeout = maps:get(<<"timeout">>, Args, 30000),
-  ConTimeout = maps:get(<<"connect_timeout">>, Args, 3000),
-  AutoRedirect = maps:get(<<"autoredirect">>, Args, true),
-  URL = url(Host, Port, SSL),
-  Auth = auth(User, Password),
-  Serial = 0,
-  Seed = erlang:md5(term_to_binary({Serial, node(), make_ref()})),
-  Data = #data{
-      auth = Auth,
-      url = URL,
-      serial = Serial,
-      seed = Seed,
-      callback = Callback,
-      timeout = Timeout,
-      connect_timeout = ConTimeout,
-      autoredirect = AutoRedirect
-    },
-  gen_statem:start_link({local, ?MODULE}, ?MODULE, Data, []).
+connect(Args, Callback) when is_map(Args), is_function(Callback) ->
+  Data = data(Args, Callback),
+  gen_statem:start({local, ?MODULE}, ?MODULE, Data, []).
+
+-spec dry_send_tx(binary(), binary()) -> ok.
+dry_send_tx(Account, Payload) ->
+  gen_statem:call(?MODULE, {dry_send_tx, Account, Payload}).
 
 -spec send_tx(binary(), binary()) -> ok.
-send_tx(Delegate, Commitment) ->
-  gen_statem:call(?MODULE, {send_tx, Delegate, Commitment}).
+send_tx(Account, Payload) ->
+  gen_statem:call(?MODULE, {send_tx, Account, Payload}).
+
+-spec is_signed(binary(), binary()) -> boolean().
+is_signed(Account, Payload) ->
+  gen_statem:call(?MODULE, {is_signed, Account, Payload}).
 
 -spec get_top_block() -> {ok, aeconnector:block()} | {error, term()}.
 get_top_block() ->
@@ -62,9 +53,6 @@ get_top_block() ->
 get_block_by_hash(Hash) ->
   gen_statem:call(?MODULE, {get_block_by_hash, Hash}).
 
--spec dry_send_tx(binary(), binary()) -> ok.
-dry_send_tx(Delegate, Commitment) ->
-  gen_statem:call(?MODULE, {dry_send_tx, Delegate, Commitment}).
 
 -spec disconnect() -> ok.
 disconnect() ->
@@ -102,6 +90,10 @@ disconnect() ->
 init(Data) ->
   %% TODO: to perform get top and info reqs;
   %% getblockchaininfo, getnetworkinfo, and getwalletinfo
+  Seed = seed(Data),
+  Rpc = rpc(<<"getblockchaininfo">>, [], _Id = base64:encode(Seed)),
+  {ok, Res} = request(Rpc, Data),
+  ct:log("~nBTC network: ~p~n", [Res]),
   {ok, connected, Data, []}.
 
 callback_mode() ->
@@ -117,13 +109,15 @@ terminate(_Reason, _State, _Data) ->
 connected(enter, _OldState, Data) ->
   {keep_state, Data};
 
-connected(call, {send_tx, Delegate, Commitment}, Data) ->
-  Seed = seed(Data),
-  Rpc = rpc(Method, Params, _Id = base64:encode(Seed)),
-  request(Rpc, Data),
+connected(call, {send_tx, _Account, _Payload}, Data) ->
+  _Seed = seed(Data),
+  %Rpc = rpc(Method, Params, _Id = base64:encode(Seed)),
+  %request(Rpc, Data),
   {keep_state, Data, [postpone]}.
 
 confirmed(enter, _OldState, Data) ->
+  %% TODO: To supply HTTP callback for miner;
+  %% TODO: Web hook for telegram;
   {next_state, connected, Data}.
 
 updated(enter, _OldState, Data) ->
@@ -138,6 +132,31 @@ disconnected(_, _, Data) ->
 %%%===================================================================
 %%%  Data access layer
 %%%===================================================================
+
+-spec data(map(), function()) -> data().
+data(Args, Callback) ->
+  User = maps:get(<<"user">>, Args),
+  Password = maps:get(<<"password">>, Args),
+  Host = maps:get(<<"host">>, Args, <<"127.0.0.1">>),
+  Port = maps:get(<<"port">>, Args, 8332),
+  SSL = maps:get(<<"ssl">>, Args, false),
+  Timeout = maps:get(<<"timeout">>, Args, 30000),
+  ConTimeout = maps:get(<<"connect_timeout">>, Args, 3000),
+  AutoRedirect = maps:get(<<"autoredirect">>, Args, true),
+  URL = url(binary_to_list(Host), Port, SSL),
+  Auth = auth(binary_to_list(User), binary_to_list(Password)),
+  Serial = 0,
+  Seed = erlang:md5(term_to_binary({Serial, node(), make_ref()})),
+  #data{
+    auth = Auth,
+    url = URL,
+    serial = Serial,
+    seed = Seed,
+    callback = Callback,
+    timeout = Timeout,
+    connect_timeout = ConTimeout,
+    autoredirect = AutoRedirect
+  }.
 
 -spec auth(data()) -> binary().
 auth(Data) ->
@@ -163,31 +182,31 @@ url(Data) ->
 seed(Data) ->
   Data#data.seed.
 
--spec callback(data()) -> function().
-callback(Data) ->
-  Data#data.callback.
+%%-spec callback(data()) -> function().
+%%callback(Data) ->
+%%  Data#data.callback.
 
--spec top(data()) -> binary().
-top(Data) ->
-  Data#data.top.
+%%-spec top(data()) -> binary().
+%%top(Data) ->
+%%  Data#data.top.
 
--spec top(data(), binary()) -> data().
-top(Data, Top) ->
-  Data#data{top = Top}.
+%%-spec top(data(), binary()) -> data().
+%%top(Data, Top) ->
+%%  Data#data{top = Top}.
 
--spec tx(data()) -> binary().
-tx(Data) ->
-  Data#data.tx.
+%%-spec tx(data()) -> binary().
+%%tx(Data) ->
+%%  Data#data.tx.
 
--spec tx(data(), binary()) -> data().
-tx(Data, Tx) ->
-  Data#data{tx = Tx}.
+%%-spec tx(data(), binary()) -> data().
+%%tx(Data, Tx) ->
+%%  Data#data{tx = Tx}.
 
 %%%===================================================================
 %%%  HTTP protocol
 %%%===================================================================
 
-url(Host, Port, true = SSL) when is_list(Host), is_integer(Port) ->
+url(Host, Port, true = _SSL) when is_list(Host), is_integer(Port) ->
   path("https://", Host, Port);
 url(Host, Port, _) when is_list(Host), is_integer(Port) ->
   path("http://", Host, Port).
@@ -195,7 +214,7 @@ url(Host, Port, _) when is_list(Host), is_integer(Port) ->
 path(Scheme, Host, Port) ->
   lists:concat([Scheme, Host, ":", Port, "/"]).
 
--spec request() -> {ok}.
+-spec request(map(), data()) -> {ok, map()} | {error, term()}.
 request(Rpc, Data) ->
   try
     Auth = auth(Data),
@@ -212,11 +231,11 @@ request(Rpc, Data) ->
       ],
     Opt = [],
     {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
-    lager:debug("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
-    {ok, jsx:decode(Res)}
+    ct:log("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
+    {ok, jsx:decode(list_to_binary(Res))}
   catch E:R:S ->
-    lager:error("Req: ~p, Error: ~p Reason: ~p Stacktrace", [Req, E, R, S]),
-    {error, {E, R}}
+    ct:log("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
+    {error, {E, R, S}}
   end.
 
 %%%===================================================================

@@ -1,5 +1,17 @@
 -module(aeconnector_btc_full_node_SUITE).
--export([suite/0, init_per_suite/1, end_per_suite/1, init_per_group/2, end_per_group/2, init_per_testcase/2, end_per_testcase/2, groups/0, all/0]).
+
+-export([suite/0]).
+
+-export([init_per_suite/1, end_per_suite/1]).
+-export([init_per_group/2, end_per_group/2]).
+-export([init_per_testcase/2, end_per_testcase/2]).
+-export([groups/0]).
+
+-export([all/0]).
+
+-export([connect/0, connect/1]).
+-export([dry_send_tx/0, dry_send_tx/1, send_tx/0, send_tx/1]).
+-export([disconnect/0, disconnect/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -7,111 +19,25 @@
 %% COMMON TEST CALLBACK FUNCTIONS
 %%--------------------------------------------------------------------
 
-%%--------------------------------------------------------------------
-%% Function: suite() -> Info
-%%
-%% Info = [tuple()]
-%%   List of key/value pairs.
-%%
-%% Description: Returns list of tuples to set default properties
-%%              for the suite.
-%%
-%% Note: The suite/0 function is only meant to be used to return
-%% default data values, not perform any other operations.
-%%--------------------------------------------------------------------
 suite() ->
-  [{timetrap,{minutes,10}}].
+  [{timetrap,{minutes,1}}].
 
-%%--------------------------------------------------------------------
-%% Function: init_per_suite(Config0) ->
-%%               Config1 | {skip,Reason} | {skip_and_save,Reason,Config1}
-%%
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding the test case configuration.
-%% Reason = term()
-%%   The reason for skipping the suite.
-%%
-%% Description: Initialization before the suite.
-%%
-%% Note: This function is free to add any key/value pairs to the Config
-%% variable, but should NOT alter/remove any existing entries.
-%%--------------------------------------------------------------------
 init_per_suite(Config) ->
-  Config.
+  [{delegate, <<"TEST">>}|Config].
 
-%%--------------------------------------------------------------------
-%% Function: end_per_suite(Config0) -> term() | {save_config,Config1}
-%%
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding the test case configuration.
-%%
-%% Description: Cleanup after the suite.
-%%--------------------------------------------------------------------
 end_per_suite(_Config) ->
   ok.
 
-%%--------------------------------------------------------------------
-%% Function: init_per_group(GroupName, Config0) ->
-%%               Config1 | {skip,Reason} | {skip_and_save,Reason,Config1}
-%%
-%% GroupName = atom()
-%%   Name of the test case group that is about to run.
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding configuration data for the group.
-%% Reason = term()
-%%   The reason for skipping all test cases and subgroups in the group.
-%%
-%% Description: Initialization before each test case group.
-%%--------------------------------------------------------------------
 init_per_group(_GroupName, Config) ->
   Config.
 
-%%--------------------------------------------------------------------
-%% Function: end_per_group(GroupName, Config0) ->
-%%               term() | {save_config,Config1}
-%%
-%% GroupName = atom()
-%%   Name of the test case group that is finished.
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding configuration data for the group.
-%%
-%% Description: Cleanup after each test case group.
-%%--------------------------------------------------------------------
 end_per_group(_GroupName, _Config) ->
   ok.
 
-%%--------------------------------------------------------------------
-%% Function: init_per_testcase(TestCase, Config0) ->
-%%               Config1 | {skip,Reason} | {skip_and_save,Reason,Config1}
-%%
-%% TestCase = atom()
-%%   Name of the test case that is about to run.
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding the test case configuration.
-%% Reason = term()
-%%   The reason for skipping the test case.
-%%
-%% Description: Initialization before each test case.
-%%
-%% Note: This function is free to add any key/value pairs to the Config
-%% variable, but should NOT alter/remove any existing entries.
-%%--------------------------------------------------------------------
 init_per_testcase(_TestCase, Config) ->
+  ok = lager:start(),
   Config.
 
-%%--------------------------------------------------------------------
-%% Function: end_per_testcase(TestCase, Config0) ->
-%%               term() | {save_config,Config1} | {fail,Reason}
-%%
-%% TestCase = atom()
-%%   Name of the test case that is finished.
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding the test case configuration.
-%% Reason = term()
-%%   The reason for failing the test case.
-%%
-%% Description: Cleanup after each test case.
-%%--------------------------------------------------------------------
 end_per_testcase(_TestCase, _Config) ->
   ok.
 
@@ -137,7 +63,12 @@ end_per_testcase(_TestCase, _Config) ->
 %% Description: Returns a list of test case group definitions.
 %%--------------------------------------------------------------------
 groups() ->
-  [].
+  [
+    {commit, [], [connect,  disconnect]}
+%%    {commit, [], [connect, dry_send_tx, send_tx, disconnect]}
+%%    {fetch, [sequence], [get_top_block, get_block_by_hash]},
+%%    {transition, [sequence], []}
+  ].
 
 %%--------------------------------------------------------------------
 %% Function: all() -> GroupsAndTestCases | {skip,Reason}
@@ -154,26 +85,13 @@ groups() ->
 %%              are to be executed.
 %%--------------------------------------------------------------------
 all() ->
-  [my_test_case].
-
+  [{group, commit}].
 
 %%--------------------------------------------------------------------
 %% TEST CASES
 %%--------------------------------------------------------------------
 
-%%--------------------------------------------------------------------
-%% Function: TestCase() -> Info
-%%
-%% Info = [tuple()]
-%%   List of key/value pairs.
-%%
-%% Description: Test case info function - returns list of tuples to set
-%%              properties for the test case.
-%%
-%% Note: This function is only meant to be used to return a list of
-%% values, not perform any other operations.
-%%--------------------------------------------------------------------
-my_test_case() ->
+connect() ->
   [].
 
 %%--------------------------------------------------------------------
@@ -192,5 +110,40 @@ my_test_case() ->
 %%              the all/0 list or in a test case group for the test case
 %%              to be executed).
 %%--------------------------------------------------------------------
-my_test_case(_Config) ->
+connect(_Config) ->
+  Args = #{
+    <<"user">> => <<"hyperchains">>,
+    <<"password">> => <<"qwerty">>,
+    <<"host">> => <<"127.0.0.1">>,
+    <<"private_key">> => <<"">>,
+    <<"port">> => 8332,
+    <<"ssl">> => false,
+    <<"timeout">> => 30000,
+    <<"connect_timeout">> => 3000,
+    <<"autoredirect">> => true
+  },
+  Callback = fun (_Con, Block) -> ct:log(info, "~nMined block: ~p~n", [Block]) end,
+  {ok, _Pid} = aeconnector_btc_full_node:connect(Args, Callback),
   ok.
+
+dry_send_tx() ->
+  [].
+
+dry_send_tx(Config) ->
+  Delegate = ?config(delegate, Config),
+  Commitment = <<"TEST">>,
+  ok = aeconnector_btc_full_node:dry_send_tx(Delegate, Commitment).
+
+send_tx() ->
+  [].
+
+send_tx(Config) ->
+  Delegate = ?config(delegate, Config),
+  Commitment = <<"TEST">>,
+  ok = aeconnector_btc_full_node:send_tx(Delegate, Commitment).
+
+disconnect() ->
+  [].
+
+disconnect(_Config) ->
+  ok = aeconnector_btc_full_node:disconnect().
