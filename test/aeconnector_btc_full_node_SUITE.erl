@@ -127,7 +127,6 @@ connect(_Config) ->
     <<"connect_timeout">> => 3000,
     <<"autoredirect">> => true,
     <<"wallet">> => <<"Hyperchains">>,
-%%    <<"from">> => <<"2NGZfw3NhM7NgRkY8RD8DoPkDDDK31QGVeh">>,
     <<"min">> => 0.001,
     <<"fee">> => 0.0009
   },

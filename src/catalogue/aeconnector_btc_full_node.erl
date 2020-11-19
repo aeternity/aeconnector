@@ -132,8 +132,9 @@ connected({call, From}, {get_block_by_hash, Hash}, Data) ->
 connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
   Wallet = wallet(Data),
   %% _Addresses = [from(Data)],
-  Args = [_Minconf = 6, _Maxconf = 9999999, _Addresses = [], true, #{ <<"minimumAmount">> => min(Data) } ],
+  Args = [_Minconf = 1, _Maxconf = 9999999, _Addresses = [], true, #{ <<"minimumAmount">> => min(Data) } ],
   {ok, Response, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
+  ct:log("~nlistunspent: ~p~n",[Response]),
   Listunspent = listunspent(Response),
   Reply = Listunspent /= [],
   ok = gen_statem:reply(From, Reply),
@@ -146,15 +147,17 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   Args = [_Minconf = 1, _Maxconf = 9999999, _Addresses = [], true, #{ <<"minimumAmount">> => min(Data) }],
   {ok, Response, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
   ct:log("~nlistunspent: ~p~n",[Response]),
-  TxId = txid(Response), Vout = vout(Response), Amount = amount(Response), Address = address(Response),
+  TxId = txid(Response), Vout = vout(Response), AmountIn = amount(Response), Address = address(Response),
+  ct:log("~nAmount: ~p~n",[AmountIn - fee(Data)]),
   %% NOTE:
   %% a) We use the first available input which matches the criteria (the list is updated each time due to sender activity);
   %% b) txid is the Input;
   %% c) vout is set to 0 accordingly to unspendable protocol for null data txs;
   %% d) Payload is encoded into Bitcoin hex format;
+  AmountOut = float_to_binary(AmountIn - fee(Data), [{decimals, 4}]),
   Hex = fun(C) when C < 10 -> $0 + C; (C) -> $a + C - 10 end,
   HexData = << <<(Hex(H)),(Hex(L))>> || <<H:4,L:4>> <= Payload >>,
-  Args2 = [[#{<<"txid">> => TxId, <<"vout">> => Vout}], #{Address => Amount - fee(Data), <<"data">> => HexData}],
+  Args2 = [[#{<<"txid">> => TxId, <<"vout">> => Vout}], #{Address => AmountOut, <<"data">> => HexData}],
   {ok, Response2, Data3} = request(<<"/wallet/", Wallet/binary>>, <<"createrawtransaction">>, Args2, Data2),
   RawTx = createrawtransaction(Response2),
   ct:log("~ncreaterawtransaction: ~p~n",[Response2]),
