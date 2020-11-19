@@ -6,6 +6,7 @@
 -export([txs/1]).
 
 -export([block/4]).
+-export([is_block/1]).
 
 -type tx() ::aeconnector_tx:tx().
 
@@ -35,3 +36,9 @@ txs(Block) ->
 block(Height, Hash, PrevHash, Txs) when
   is_integer(Height), is_binary(Hash), is_binary(PrevHash), is_list(Txs) ->
   #block{ height = Height, hash = Hash, prev_hash = PrevHash, txs = Txs}.
+
+-spec is_block(term()) -> boolean().
+is_block(#block{}) ->
+  true;
+is_block(_) ->
+  false.

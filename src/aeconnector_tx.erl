@@ -3,6 +3,8 @@
 -export([account/1]).
 -export([payload/1]).
 
+-export([is_tx/1]).
+
 %% TODO: To test;
 -export([test_tx/2]).
 
@@ -30,3 +32,9 @@ tx(Account, Payload)
 -spec test_tx(Vin::term(), Vout::term()) -> tx().
 test_tx(Vin, Vout) ->
   #tx{ account = Vin, payload = Vout}.
+
+-spec is_tx(term()) -> boolean().
+is_tx(#tx{}) ->
+  true;
+is_tx(_) ->
+  false.

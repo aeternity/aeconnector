@@ -13,7 +13,6 @@
 -export([dry_send_tx/0, dry_send_tx/1, send_tx/0, send_tx/1]).
 -export([get_top_block/0, get_top_block/1]).
 -export([get_block_by_hash/0, get_block_by_hash/1]).
--export([is_signed/0, is_signed/1]).
 -export([disconnect/0, disconnect/1]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -28,9 +27,9 @@ suite() ->
 init_per_suite(Config) ->
   ok = lager:start(),
   %% TODO: This data should be externally configured!
-  Delegate = <<"TEST">>,
+  Payload = <<"Hyperchains trace">>,
   GenesisHash = <<"0000000068d9d45579eeaf657ac6b446d8ec072a40b9cf7c0d566d57e20c5148">>,
-  Setup = [{delegate, Delegate}, {genesis_hash, GenesisHash}],
+  Setup = [{payload, Payload}, {genesis_hash, GenesisHash}],
   lists:append(Setup, Config).
 
 end_per_suite(_Config) ->
@@ -71,9 +70,8 @@ end_per_testcase(_TestCase, _Config) ->
 %%--------------------------------------------------------------------
 groups() ->
   [
-    {user, [sequence], [connect, get_top_block, get_block_by_hash, disconnect]}
-%%    {user, [sequence], [connect, get_top_block, get_block_by_hash, is_signed, disconnect]},
-%%    {delegate, [sequence], [connect, dry_send_tx, send_tx, disconnect]}
+    {user, [sequence], [connect, get_top_block, get_block_by_hash, disconnect]},
+    {delegate, [sequence], [connect, dry_send_tx, send_tx, disconnect]}
   ].
 
 %%--------------------------------------------------------------------
@@ -91,7 +89,7 @@ groups() ->
 %%              are to be executed.
 %%--------------------------------------------------------------------
 all() ->
-  [{group, user}].
+  [{group, user}, {group, delegate}].
 
 %%--------------------------------------------------------------------
 %% TEST CASES
@@ -127,17 +125,20 @@ connect(_Config) ->
     <<"ssl">> => false,
     <<"timeout">> => 30000,
     <<"connect_timeout">> => 3000,
-    <<"autoredirect">> => true
+    <<"autoredirect">> => true,
+    <<"wallet">> => <<"Hyperchains">>,
+    <<"from">> => <<"2NGZfw3NhM7NgRkY8RD8DoPkDDDK31QGVeh">>,
+    <<"amount">> => 0.0001
   },
   Callback = fun (_Con, Block) -> ct:log(info, "~nMined block: ~p~n", [Block]) end,
-  {ok, Pid} = aeconnector_btc_full_node:connect(Args, Callback),
+  {ok, Pid} = aeconnector:connect(btc_conncetor(), Args, Callback),
   {comment, Pid}.
 
 get_top_block() ->
   [].
 
 get_top_block(_Config) ->
-  {ok, Hash} = aeconnector_btc_full_node:get_top_block(), true = is_binary(Hash),
+  {ok, Hash} = aeconnector:get_top_block(btc_conncetor()),
   {comment, Hash}.
 
 get_block_by_hash() ->
@@ -145,33 +146,30 @@ get_block_by_hash() ->
 
 get_block_by_hash(Config) ->
   Hash = ?config(genesis_hash, Config),
-  {ok, Block} = aeconnector_btc_full_node:get_block_by_hash(Hash),
+  {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
   {comment, Block}.
 
-is_signed() ->
-  [].
-
-is_signed(_Config) ->
-  ok.
 
 dry_send_tx() ->
   [].
 
-dry_send_tx(Config) ->
-  Delegate = ?config(delegate, Config),
-  Commitment = <<"TEST">>,
-  ok = aeconnector_btc_full_node:dry_send_tx(Delegate, Commitment).
+dry_send_tx(_Config) ->
+  Payload = <<"Hyperchains test trace">>,
+  true = aeconnector:dry_send_tx(btc_conncetor(), <<"TEST">>, Payload),
+  ok.
 
 send_tx() ->
   [].
 
-send_tx(Config) ->
-  Delegate = ?config(delegate, Config),
-  Commitment = <<"TEST">>,
-  ok = aeconnector_btc_full_node:send_tx(Delegate, Commitment).
+send_tx(_Config) ->
+  Payload = <<"Hyperchains trace">>,
+  ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload).
 
 disconnect() ->
   [].
 
 disconnect(_Config) ->
-  ok = aeconnector_btc_full_node:disconnect().
+  ok = aeconnector:disconnect(btc_conncetor()).
+
+btc_conncetor() ->
+  aeconnector_btc_full_node.
