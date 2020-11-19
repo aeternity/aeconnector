@@ -127,8 +127,9 @@ connect(_Config) ->
     <<"connect_timeout">> => 3000,
     <<"autoredirect">> => true,
     <<"wallet">> => <<"Hyperchains">>,
-    <<"from">> => <<"2NGZfw3NhM7NgRkY8RD8DoPkDDDK31QGVeh">>,
-    <<"amount">> => 0.0001
+%%    <<"from">> => <<"2NGZfw3NhM7NgRkY8RD8DoPkDDDK31QGVeh">>,
+    <<"min">> => 0.001,
+    <<"fee">> => 0.0009
   },
   Callback = fun (_Con, Block) -> ct:log(info, "~nMined block: ~p~n", [Block]) end,
   {ok, Pid} = aeconnector:connect(btc_conncetor(), Args, Callback),

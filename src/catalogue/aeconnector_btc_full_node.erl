@@ -83,11 +83,13 @@ disconnect() ->
     %% Selected wallet (balance > 0)
     wallet::binary(),
     %% Bitcoin sender address
-    from::binary(),
+%%    from::binary(),
     %% Bitcoin receiver address (from by default)
     to::binary(),
-    %% Amount to send;
-    amount::float()
+    %% Permitted amount to operate;
+    min::float(),
+    %% Calculated fee
+    fee::float()
   }).
 
 -type data() :: #data{}.
@@ -129,7 +131,8 @@ connected({call, From}, {get_block_by_hash, Hash}, Data) ->
 
 connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
   Wallet = wallet(Data),
-  Args = [_Minconf = 6, _Maxconf = 9999999, _Addresses = [from(Data)] , true, #{ <<"minimumAmount">> => amount(Data) } ],
+  %% _Addresses = [from(Data)],
+  Args = [_Minconf = 6, _Maxconf = 9999999, _Addresses = [], true, #{ <<"minimumAmount">> => min(Data) } ],
   {ok, Response, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
   Listunspent = listunspent(Response),
   Reply = Listunspent /= [],
@@ -139,9 +142,11 @@ connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
 connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   Wallet = wallet(Data),
   %% Min confirmations is lower with idea to "hot" refilling of balance for operators;
-  Args = [_Minconf = 1, _Maxconf = 9999999, _Addresses = [from(Data)] , true, #{ <<"minimumAmount">> => amount(Data) } ],
+  %% _Addresses = [from(Data)],
+  Args = [_Minconf = 1, _Maxconf = 9999999, _Addresses = [], true, #{ <<"minimumAmount">> => min(Data) }],
   {ok, Response, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
-  TxId = txid(Response), Vout = vout(Response),
+  ct:log("~nlistunspent: ~p~n",[Response]),
+  TxId = txid(Response), Vout = vout(Response), Amount = amount(Response), Address = address(Response),
   %% NOTE:
   %% a) We use the first available input which matches the criteria (the list is updated each time due to sender activity);
   %% b) txid is the Input;
@@ -149,7 +154,7 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   %% d) Payload is encoded into Bitcoin hex format;
   Hex = fun(C) when C < 10 -> $0 + C; (C) -> $a + C - 10 end,
   HexData = << <<(Hex(H)),(Hex(L))>> || <<H:4,L:4>> <= Payload >>,
-  Args2 = [[#{<<"txid">> => TxId, <<"vout">> => Vout}], #{to(Data) => amount(Data), <<"data">> => HexData}],
+  Args2 = [[#{<<"txid">> => TxId, <<"vout">> => Vout}], #{Address => Amount - fee(Data), <<"data">> => HexData}],
   {ok, Response2, Data3} = request(<<"/wallet/", Wallet/binary>>, <<"createrawtransaction">>, Args2, Data2),
   RawTx = createrawtransaction(Response2),
   ct:log("~ncreaterawtransaction: ~p~n",[Response2]),
@@ -192,9 +197,10 @@ data(Args, Callback) ->
   ConTimeout = maps:get(<<"connect_timeout">>, Args, 3000),
   AutoRedirect = maps:get(<<"autoredirect">>, Args, true),
   Wallet = maps:get(<<"wallet">>, Args),
-  From = maps:get(<<"from">>, Args),
-  To = maps:get(<<"to">>, Args, From),
-  Amount = maps:get(<<"amount">>, Args),
+%%  From = maps:get(<<"from">>, Args),
+%%  To = maps:get(<<"to">>, Args, From),
+  Min = maps:get(<<"min">>, Args),
+  Fee = maps:get(<<"fee">>, Args),
   URL = url(binary_to_list(Host), Port, SSL),
   Auth = auth(binary_to_list(User), binary_to_list(Password)),
   Serial = 0,
@@ -209,9 +215,10 @@ data(Args, Callback) ->
     connect_timeout = ConTimeout,
     autoredirect = AutoRedirect,
     wallet = Wallet,
-    from = From,
-    to = To,
-    amount = Amount
+%%    from = From,
+%%    to = To,
+    min = Min,
+    fee = Fee
   }.
 
 -spec auth(data()) -> binary().
@@ -234,17 +241,21 @@ autoredirect(Data) ->
 wallet(Data) ->
   Data#data.wallet.
 
--spec from(data()) -> binary().
-from(Data) ->
-  Data#data.from.
+%%-spec from(data()) -> binary().
+%%from(Data) ->
+%%  Data#data.from.
 
--spec to(data()) -> binary().
-to(Data) ->
-  Data#data.to.
+%%-spec to(data()) -> binary().
+%%to(Data) ->
+%%  Data#data.to.
 
--spec amount(data()) -> float().
-amount(Data) ->
-  Data#data.amount.
+-spec min(data()) -> float().
+min(Data) ->
+  Data#data.min.
+
+-spec fee(data()) -> float().
+fee(Data) ->
+  Data#data.fee.
 
 -spec url(data()) -> binary().
 url(Data) ->
@@ -367,6 +378,18 @@ listunspent(Response) ->
 txid(Response) ->
   [H|_] = maps:get(<<"result">>, Response),
   Result = maps:get(<<"txid">>, H), true = is_binary(Result),
+  Result.
+
+-spec amount(map()) -> binary().
+amount(Response) ->
+  [H|_] = maps:get(<<"result">>, Response),
+  Result = maps:get(<<"amount">>, H), true = is_float(Result),
+  Result.
+
+-spec address(map()) -> binary().
+address(Response) ->
+  [H|_] = maps:get(<<"result">>, Response),
+  Result = maps:get(<<"address">>, H), true = is_binary(Result),
   Result.
 
 -spec vout(map()) -> integer().
