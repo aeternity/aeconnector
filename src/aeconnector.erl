@@ -5,11 +5,14 @@
 -export([connect/3]).
 -export([get_block_by_hash/2, get_top_block/1]).
 -export([dry_send_tx/3, send_tx/3]).
+-export([schedule/2]).
 -export([disconnect/1]).
 
 -type connector() :: atom().
 
 -type block() :: aeconnector_block:block().
+
+-type item() :: aeconnector_schedule:item().
 
 -callback connect(map(), function()) -> {ok, pid()} | {error, term()}.
 
@@ -19,7 +22,11 @@
 -callback get_top_block() -> {ok, binary()} | {error, term()}.
 -callback get_block_by_hash(binary()) -> {ok, block()} | {error, term()}.
 
+-callback schedule([item()]) -> ok.
+
 -callback disconnect() -> ok.
+
+-optional_callbacks([schedule/1]).
 
 -export_type([connector/0]).
 
@@ -69,6 +76,15 @@ get_block_by_hash(Con, Hash) ->
     Res
   catch E:R ->
     {error, {E, R}}
+  end.
+
+-spec schedule(connector(), [item()]) -> ok.
+schedule(Con, Items) ->
+  try
+      ok = Con:schedule(Items)
+  catch
+      E:R ->
+        {error, {E, R}}
   end.
 
 -spec disconnect(connector()) -> ok.

@@ -23,7 +23,12 @@
 %% transitions
 -export([connected/3, confirmed/3, updated/3, disconnected/3]).
 
+%% scheduler
+-export([schedule/1]).
+
 -type block() :: aeconnector_block:block().
+
+-type item() :: aeconnector_schedule:item().
 
 %%%===================================================================
 %%%  aeconnector behaviour
@@ -50,28 +55,34 @@ get_top_block() ->
 get_block_by_hash(Hash) ->
   gen_statem:call(?MODULE, {get_block_by_hash, Hash}).
 
-
 -spec disconnect() -> ok.
 disconnect() ->
   gen_statem:stop(?MODULE).
+
+%% By this way we can act as payment gateway
+-spec schedule([item()]) -> ok | {error, {term(), term()}}.
+schedule(Items) ->
+  gen_statem:call(?MODULE, {schedule, Items}).
 
 %%%===================================================================
 %%%  gen_statem behaviour
 %%%===================================================================
 
 -record(data, {
-    %% RPC auth (bitcoin.conf)
+    %% RPC auth
     auth::list(),
-    %% RPC url (bitcoin.conf)
+    %% RPC url
     url::list(),
     %% RPC serial
     serial::non_neg_integer(),
     %% RPC seed
     seed::binary(),
-    %% New mained block anouncement
+    %% New mined block anouncement
     callback::function(),
     %% The current top block hash
     top::binary(),
+    %% The height of the first commitment (if set the pruneblockchain gets executed)
+    height::non_neg_integer(),
     %% The current commitment hash
     tx::binary(),
     %% Request timeout
@@ -80,27 +91,30 @@ disconnect() ->
     connect_timeout::integer(),
     %% Allowed redirect
     autoredirect::boolean(),
-    %% Selected wallet (balance > 0)
+    %% Selected wallet
     wallet::binary(),
-    %% Bitcoin sender address
-%%    from::binary(),
-    %% Bitcoin receiver address (from by default)
-    to::binary(),
-    %% Permitted amount to operate;
+    %% Queued commitments list;
+    queue::term(),
+    %% Minimum balance to operate
     min::float(),
-    %% Calculated fee
-    fee::float()
+    %% Direct fee definition
+    fee::float(),
+    %% Estimated fee mode
+    estimate:: undefined | unset | economical | conservative
   }).
 
 -type data() :: #data{}.
 
 init(Data) ->
-  %% TODO: to perform get top and info reqs;
-  %% getblockchaininfo, getnetworkinfo, and getwalletinfo
-  %% TODO: pruneblockchain at height of genesis;
-  {ok, Res, DataUp} = request(<<"/">>, <<"getblockchaininfo">>, [], Data),
-  lager:debug("~nBTC network: ~p~n", [Res]),
-  {ok, connected, DataUp, []}.
+  Height = height(Data),
+  case is_integer(Height) of
+    true ->
+      {ok, Res, DataUp} = request(<<"/">>, <<"pruneblockchain">>, [Height], Data),
+      lager:debug("~nBTC network is connected: ~p~n", [result(Res)]),
+      {ok, connected, DataUp, []};
+    _ ->
+      {ok, connected, Data, []}
+    end.
 
 callback_mode() ->
   [state_functions, state_enter].
@@ -113,19 +127,20 @@ terminate(_Reason, _State, _Data) ->
 %%%===================================================================
 
 connected(enter, _OldState, Data) ->
-  {ok, _Response, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
+  {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
   _Top = top(Data),
+  lager:debug("~nBTC network is connected: ~p~n", [result(Res)]),
   {keep_state, Data2};
 
 connected({call, From}, {get_top_block}, Data) ->
-  {ok, Response, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
-  Reply = top_block(Response),
+  {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
+  Reply = result(Res),
   ok = gen_statem:reply(From, {ok, Reply}),
   {keep_state, Data2, []};
 
 connected({call, From}, {get_block_by_hash, Hash}, Data) ->
-  {ok, Response, Data2} = request(<<"/">>, <<"getblock">>, [Hash, _Verbosity = 2], Data),
-  Reply = block(Response),
+  {ok, Res, Data2} = request(<<"/">>, <<"getblock">>, [Hash, _Verbosity = 2], Data),
+  Reply = block(Res),
   ok = gen_statem:reply(From, {ok, Reply}),
   {keep_state, Data2, []};
 
@@ -133,43 +148,81 @@ connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
   Wallet = wallet(Data),
   %% _Addresses = [from(Data)],
   Args = [_Minconf = 1, _Maxconf = 9999999, _Addresses = [], true, #{ <<"minimumAmount">> => min(Data) } ],
-  {ok, Response, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
-  ct:log("~nlistunspent: ~p~n",[Response]),
-  Listunspent = listunspent(Response),
+  {ok, Res, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
+  ct:log("~nlistunspent: ~p~n",[Res]),
+  Listunspent = result(Res),
   Reply = Listunspent /= [],
   ok = gen_statem:reply(From, Reply),
   {keep_state, Data2, []};
 
 connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   Wallet = wallet(Data),
-  %% Min confirmations is lower with idea to "hot" refilling of balance for operators;
-  %% _Addresses = [from(Data)],
+  %% Min confirmations is lower with idea to support "hot" balance refilling for validators;
   Args = [_Minconf = 1, _Maxconf = 9999999, _Addresses = [], true, #{ <<"minimumAmount">> => min(Data) }],
-  {ok, Response, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
-  ct:log("~nlistunspent: ~p~n",[Response]),
-  TxId = txid(Response), Vout = vout(Response), AmountIn = amount(Response), Address = address(Response),
-  ct:log("~nAmount: ~p~n",[AmountIn - fee(Data)]),
+  {ok, Res, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
+  ct:log("~nlistunspent: ~p~n",[Res]),
+  [Input|_] = result(Res),
+  TxId = maps:get(<<"txid">>, Input),
+  Vout = maps:get(<<"vout">>, Input),
+  AmountIn = maps:get(<<"amount">>, Input),
   %% NOTE:
-  %% a) We use the first available input which matches the criteria (the list is updated each time due to sender activity);
-  %% b) txid is the Input;
+  %% a) We use the first available input which matches the criteria (the list will be updated due to the sender activity);
+  %% b) txid from the Input;
   %% c) vout is set to 0 accordingly to unspendable protocol for null data txs;
-  %% d) Payload is encoded into Bitcoin hex format;
-  AmountOut = float_to_binary(AmountIn - fee(Data), [{decimals, 4}]),
-  Hex = fun(C) when C < 10 -> $0 + C; (C) -> $a + C - 10 end,
-  HexData = << <<(Hex(H)),(Hex(L))>> || <<H:4,L:4>> <= Payload >>,
-  Args2 = [[#{<<"txid">> => TxId, <<"vout">> => Vout}], #{Address => AmountOut, <<"data">> => HexData}],
-  {ok, Response2, Data3} = request(<<"/wallet/", Wallet/binary>>, <<"createrawtransaction">>, Args2, Data2),
-  RawTx = createrawtransaction(Response2),
-  ct:log("~ncreaterawtransaction: ~p~n",[Response2]),
+  %% d) Payload is encoded into hex format;
+  ToHex = fun(C) when C < 10 -> $0 + C; (C) -> $a + C - 10 end,
+  HexData = << <<(ToHex(H)),(ToHex(L))>> || <<H:4,L:4>> <= Payload >>,
+  Inputs = [#{<<"txid">> => TxId, <<"vout">> => Vout}],
+  Outputs = #{<<"data">> => HexData},
+  %% NOTE:
+  %% The payment address is made from queued specification (otherwise to the same input)
+  {Out, Data3} = out(Data),
+  Payment =
+    case Out of
+      empty ->
+        Address = maps:get(<<"address">>, Input),
+        AmountOut = float_to_binary(AmountIn - fee(Data), [{decimals, 4}]),
+        ct:log("~nDefault commitment (address: ~p, amount: ~p)~n", [Address, AmountOut]),
+        #{Address => AmountOut};
+      {value, Item} ->
+        Address = aeconnector_schedule:address(Item),
+        _Amount = aeconnector_schedule:amount(Item),
+        _Fee = aeconnector_schedule:fee(Item),
+        Comment = aeconnector_schedule:comment(Item),
+        AmountOut = 0,
+        %% TODO To calculate output;
+        ct:log("~nScheduled commitment (address: ~p, amount: ~p, comment: ~p)~n", [Address, AmountOut, Comment]),
+        #{Address => AmountOut}
+    end,
+
+  Outputs2 = maps:merge(Outputs, Payment),
+  Args2 = [Inputs, Outputs2],
+  {ok, Res2, Data3} = request(<<"/wallet/", Wallet/binary>>, <<"createrawtransaction">>, Args2, Data2),
+  RawTx = result(Res2),
+  ct:log("~ncreaterawtransaction: ~p~n",[Res2]),
+
   Args3 = [RawTx],
-  {ok, Response3, Data4} = request(<<"/wallet/", Wallet/binary>>, <<"signrawtransactionwithwallet">>, Args3, Data3),
-  ct:log("~nsignrawtransactionwithwallet: ~p~n",[Response3]),
-  SignedTx = signrawtransactionwithwallet(Response3),
-  Args4 = [SignedTx],
-  {ok, Response4, Data5} = request(<<"/wallet/", Wallet/binary>>, <<"sendrawtransaction">>, Args4, Data4),
-  ct:log("~nsendrawtransaction: ~p~n",[Response4]),
+  {ok, Res3, Data4} = request(<<"/wallet/", Wallet/binary>>, <<"signrawtransactionwithwallet">>, Args3, Data3),
+  ct:log("~nsignrawtransactionwithwallet: ~p~n",[Res3]),
+  SignedTx = result(Res3),
+  Complete = maps:get(<<"complete">>, SignedTx), true = Complete,
+  Hex = maps:get(<<"hex">>, SignedTx),
+
+  Args4 = [Hex],
+  {ok, Res4, Data5} = request(<<"/wallet/", Wallet/binary>>, <<"sendrawtransaction">>, Args4, Data4),
+  ct:log("~nsendrawtransaction: ~p~n",[Res4]),
   ok = gen_statem:reply(From, ok),
-  {keep_state, Data5, []}.
+  {keep_state, Data5, []};
+
+connected({call, From}, {schedule, Items}, Data) ->
+  Queue2 = lists:foldl(
+    fun (Item, State) -> queue:in(Item, State) end,
+    queue(Data),
+    Items
+  ),
+  Data2 = queue(Data, Queue2),
+  ok = gen_statem:reply(From, ok),
+  {keep_state, Data2, []}.
 
 confirmed(enter, _OldState, Data) ->
   %% TODO: To supply HTTP callback for miner;
@@ -189,8 +242,20 @@ disconnected(_, _, Data) ->
 %%%  Data access layer
 %%%===================================================================
 
+-spec out(data()) -> {{value, item()}, data()} | {empty, data()}.
+out(Data) ->
+  Queue = queue(Data),
+  case queue:out(Queue) of
+    {Res = {value, _Item}, Queue2} ->
+      Data2 = queue(Data, Queue2),
+      {Res, Data2};
+    {Res = empty, _Queue2} ->
+      {Res, Data}
+  end.
+
 -spec data(map(), function()) -> data().
 data(Args, Callback) ->
+  Height = maps:get(<<"height">>, Args, undefined),
   User = maps:get(<<"user">>, Args),
   Password = maps:get(<<"password">>, Args),
   Host = maps:get(<<"host">>, Args, <<"127.0.0.1">>),
@@ -200,8 +265,6 @@ data(Args, Callback) ->
   ConTimeout = maps:get(<<"connect_timeout">>, Args, 3000),
   AutoRedirect = maps:get(<<"autoredirect">>, Args, true),
   Wallet = maps:get(<<"wallet">>, Args),
-%%  From = maps:get(<<"from">>, Args),
-%%  To = maps:get(<<"to">>, Args, From),
   Min = maps:get(<<"min">>, Args),
   Fee = maps:get(<<"fee">>, Args),
   URL = url(binary_to_list(Host), Port, SSL),
@@ -214,12 +277,12 @@ data(Args, Callback) ->
     serial = Serial,
     seed = Seed,
     callback = Callback,
+    height = Height,
     timeout = Timeout,
     connect_timeout = ConTimeout,
     autoredirect = AutoRedirect,
     wallet = Wallet,
-%%    from = From,
-%%    to = To,
+    queue = queue:new(),
     min = Min,
     fee = Fee
   }.
@@ -244,13 +307,9 @@ autoredirect(Data) ->
 wallet(Data) ->
   Data#data.wallet.
 
-%%-spec from(data()) -> binary().
-%%from(Data) ->
-%%  Data#data.from.
-
-%%-spec to(data()) -> binary().
-%%to(Data) ->
-%%  Data#data.to.
+-spec height(data()) -> binary().
+height(Data) ->
+  Data#data.height.
 
 -spec min(data()) -> float().
 min(Data) ->
@@ -271,6 +330,14 @@ seed(Data) ->
 -spec seed(data(), binary()) -> data().
 seed(Data, Seed) ->
   Data#data{ seed = Seed }.
+
+-spec queue(data()) -> term().
+queue(Data) ->
+  Data#data.queue.
+
+-spec queue(data(), term()) -> data().
+queue(Data, Queue) ->
+  Data#data{ queue = Queue}.
 
 %%-spec callback(data()) -> function().
 %%callback(Data) ->
@@ -351,14 +418,13 @@ rpc(Method, Params, Id, Version) ->
       <<"id">> => Id
     }.
 
--spec top_block(map()) -> binary().
-top_block(Response) ->
-  Res = maps:get(<<"result">>, Response), true = is_binary(Res),
-  Res.
+-spec result(map()) -> binary().
+result(Response) ->
+  maps:get(<<"result">>, Response).
 
 -spec block(map()) -> block().
 block(Response) ->
-  Result = maps:get(<<"result">>, Response),
+  Result = result(Response),
   Hash = maps:get(<<"hash">>, Result), true = is_binary(Hash),
   Height = maps:get(<<"height">>, Result), true = is_integer(Height),
   PrevHash = maps:get(<<"previousblockhash">>, Result), true = is_binary(PrevHash),
@@ -371,44 +437,3 @@ block(Response) ->
       aeconnector_tx:test_tx(Vin, Vout) end|| Tx <- maps:get(<<"tx">>, Result)
   ],
   aeconnector_block:block(Height, Hash, PrevHash, Txs).
-
--spec listunspent(map()) -> float().
-listunspent(Response) ->
-  Result = maps:get(<<"result">>, Response), true = is_list(Result),
-  Result.
-
--spec txid(map()) -> binary().
-txid(Response) ->
-  [H|_] = maps:get(<<"result">>, Response),
-  Result = maps:get(<<"txid">>, H), true = is_binary(Result),
-  Result.
-
--spec amount(map()) -> binary().
-amount(Response) ->
-  [H|_] = maps:get(<<"result">>, Response),
-  Result = maps:get(<<"amount">>, H), true = is_float(Result),
-  Result.
-
--spec address(map()) -> binary().
-address(Response) ->
-  [H|_] = maps:get(<<"result">>, Response),
-  Result = maps:get(<<"address">>, H), true = is_binary(Result),
-  Result.
-
--spec vout(map()) -> integer().
-vout(Response) ->
-  [H|_] = maps:get(<<"result">>, Response),
-  Result = maps:get(<<"vout">>, H), true = is_integer(Result),
-  Result.
-
--spec createrawtransaction(map()) -> binary().
-createrawtransaction(Response) ->
-  Result = maps:get(<<"result">>, Response), true = is_binary(Result),
-  Result.
-
--spec signrawtransactionwithwallet(map()) -> binary().
-signrawtransactionwithwallet(Response) ->
-  Result = maps:get(<<"result">>, Response),
-  Complete = maps:get(<<"complete">>, Result), true = Complete,
-  Hex = maps:get(<<"hex">>, Result), true = is_binary(Hex),
-  Hex.

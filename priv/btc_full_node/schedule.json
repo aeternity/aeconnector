@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BTC schedule",
+  "description": "Scheduled btc addresses to land commitments",
+  "type": "array",
+  "properties": {
+    "address": {
+      "description": "Recipient address to land the commitment transaction",
+      "type": "string"
+    },
+    "amount":{
+      "description": "Transaction amount to spend",
+      "type": "float"
+    },
+    "fee":{
+      "description": "Transaction fee (if skipped see estimate option)",
+      "type": "float"
+    },
+    "comment":{
+      "description": "Textual description of a transaction",
+      "type": "string"
+    }
+  },
+  "required": [ "address", "amount" ]
+}

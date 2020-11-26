@@ -1,3 +1,9 @@
+%%% -*- erlang-indent-level: 4 -*-
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 2020, Aeternity Anstalt
+%%% @doc
+
+%%% @end
 -module(aeconnector_block).
 
 -export([height/1]).
