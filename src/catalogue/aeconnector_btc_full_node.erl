@@ -21,7 +21,7 @@
 -export([callback_mode/0]).
 
 %% transitions
--export([connected/3, confirmed/3, updated/3, disconnected/3]).
+-export([connected/3, disconnected/3]).
 
 %% scheduler
 -export([schedule/1]).
@@ -81,8 +81,6 @@ schedule(Items) ->
     callback::function(),
     %% The current top block hash
     top::binary(),
-    %% The height of the first commitment (if set the pruneblockchain gets executed)
-    height::non_neg_integer(),
     %% The current commitment hash
     tx::binary(),
     %% Request timeout
@@ -106,15 +104,18 @@ schedule(Items) ->
 -type data() :: #data{}.
 
 init(Data) ->
-  Height = height(Data),
-  case is_integer(Height) of
-    true ->
-      {ok, Res, DataUp} = request(<<"/">>, <<"pruneblockchain">>, [Height], Data),
-      lager:debug("~nBTC network is connected: ~p~n", [result(Res)]),
-      {ok, connected, DataUp, []};
-    _ ->
-      {ok, connected, Data, []}
-    end.
+  try
+    {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
+    Top = result(Res),
+    {ok, Res, Data3} = request(<<"/">>, <<"getblock">>, [Top, _Verbosity = 2], Data2),
+    ct:log("~nBTC network is synched: ~p~n", [Top]),
+
+    Callback = callback(Data3),
+    Callback(?MODULE, block(Res)),
+    {ok, connected, top(Data3, Top)}
+  catch _:_ ->
+    {ok, disconnected, Data, [{state_timeout, 1000, connect}]}
+  end.
 
 callback_mode() ->
   [state_functions, state_enter].
@@ -127,10 +128,22 @@ terminate(_Reason, _State, _Data) ->
 %%%===================================================================
 
 connected(enter, _OldState, Data) ->
+  Top = top(Data),
+  ct:log("~nBTC network is connected: ~p~n", [Top]),
+  lager:debug("~nBTC network is connected: ~p~n", [Top]),
+  {keep_state, Data, [{{timeout, sync}, 1000, _EventContent = []}]};
+
+connected({timeout, sync}, _, Data) ->
   {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
-  _Top = top(Data),
-  lager:debug("~nBTC network is connected: ~p~n", [result(Res)]),
-  {keep_state, Data2};
+  Top = result(Res),
+
+  Hash = top(Data),
+  {ok, Res, Data2} = request(<<"/">>, <<"getblock">>, [Hash, _Verbosity = 2], Data),
+  ct:log("~nBTC network is synched: ~p~n", [Top]),
+
+  Callback = callback(Data),
+  Callback(?MODULE, block(Res)),
+  {keep_state, Data2, []};
 
 connected({call, From}, {get_top_block}, Data) ->
   {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
@@ -146,10 +159,8 @@ connected({call, From}, {get_block_by_hash, Hash}, Data) ->
 
 connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
   Wallet = wallet(Data),
-  %% _Addresses = [from(Data)],
   Args = [_Minconf = 1, _Maxconf = 9999999, _Addresses = [], true, #{ <<"minimumAmount">> => min(Data) } ],
   {ok, Res, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"listunspent">>, Args, Data),
-  ct:log("~nlistunspent: ~p~n",[Res]),
   Listunspent = result(Res),
   Reply = Listunspent /= [],
   ok = gen_statem:reply(From, Reply),
@@ -224,16 +235,13 @@ connected({call, From}, {schedule, Items}, Data) ->
   ok = gen_statem:reply(From, ok),
   {keep_state, Data2, []}.
 
-confirmed(enter, _OldState, Data) ->
-  %% TODO: To supply HTTP callback for miner;
-  %% TODO: Web hook for telegram;
-  {next_state, connected, Data}.
-
-updated(enter, _OldState, Data) ->
-  {next_state, connected, Data}.
-
 disconnected(enter, _OldState, Data) ->
   {keep_state, Data};
+
+disconnected(state_timeout, _, Data) ->
+  ct:log("~nBTC network connection......~n"),
+  lager:debug("~nBTC network connection......~n"),
+  {next_state, connected, Data};
 
 disconnected(_, _, Data) ->
   {keep_state, Data, [postpone]}.
@@ -255,7 +263,6 @@ out(Data) ->
 
 -spec data(map(), function()) -> data().
 data(Args, Callback) ->
-  Height = maps:get(<<"height">>, Args, undefined),
   User = maps:get(<<"user">>, Args),
   Password = maps:get(<<"password">>, Args),
   Host = maps:get(<<"host">>, Args, <<"127.0.0.1">>),
@@ -277,7 +284,6 @@ data(Args, Callback) ->
     serial = Serial,
     seed = Seed,
     callback = Callback,
-    height = Height,
     timeout = Timeout,
     connect_timeout = ConTimeout,
     autoredirect = AutoRedirect,
@@ -307,10 +313,6 @@ autoredirect(Data) ->
 wallet(Data) ->
   Data#data.wallet.
 
--spec height(data()) -> binary().
-height(Data) ->
-  Data#data.height.
-
 -spec min(data()) -> float().
 min(Data) ->
   Data#data.min.
@@ -339,17 +341,17 @@ queue(Data) ->
 queue(Data, Queue) ->
   Data#data{ queue = Queue}.
 
-%%-spec callback(data()) -> function().
-%%callback(Data) ->
-%%  Data#data.callback.
+-spec callback(data()) -> function().
+callback(Data) ->
+  Data#data.callback.
 
 -spec top(data()) -> binary().
 top(Data) ->
   Data#data.top.
 
-%%-spec top(data(), binary()) -> data().
-%%top(Data, Top) ->
-%%  Data#data{top = Top}.
+-spec top(data(), binary()) -> data().
+top(Data, Top) ->
+  Data#data{top = Top}.
 
 %%-spec tx(data()) -> binary().
 %%tx(Data) ->
