@@ -15,6 +15,8 @@
 -export([get_top_block/0, get_block_by_hash/1]).
 -export([disconnect/0]).
 
+-export([schedule/1]).
+
 %% gen_statem.
 -export([init/1]).
 -export([terminate/3]).
@@ -22,9 +24,6 @@
 
 %% transitions
 -export([connected/3, disconnected/3]).
-
-%% scheduler
--export([schedule/1]).
 
 -type block() :: aeconnector_block:block().
 
@@ -107,12 +106,7 @@ init(Data) ->
   try
     {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
     Top = result(Res),
-    {ok, Res, Data3} = request(<<"/">>, <<"getblock">>, [Top, _Verbosity = 2], Data2),
-    ct:log("~nBTC network is synched: ~p~n", [Top]),
-
-    Callback = callback(Data3),
-    Callback(?MODULE, block(Res)),
-    {ok, connected, top(Data3, Top)}
+    {ok, connected, top(Data2, Top)}
   catch _:_ ->
     {ok, disconnected, Data, [{state_timeout, 1000, connect}]}
   end.
@@ -128,22 +122,26 @@ terminate(_Reason, _State, _Data) ->
 %%%===================================================================
 
 connected(enter, _OldState, Data) ->
-  Top = top(Data),
-  ct:log("~nBTC network is connected: ~p~n", [Top]),
-  lager:debug("~nBTC network is connected: ~p~n", [Top]),
-  {keep_state, Data, [{{timeout, sync}, 1000, _EventContent = []}]};
+  lager:debug("~nBTC network is connected: ~p~n", [top(Data)]),
+
+  {keep_state, Data, [{{timeout, sync}, 0, _EventContent = []}]};
 
 connected({timeout, sync}, _, Data) ->
+  Top = top(Data),
   {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
-  Top = result(Res),
-
-  Hash = top(Data),
-  {ok, Res, Data2} = request(<<"/">>, <<"getblock">>, [Hash, _Verbosity = 2], Data),
-  ct:log("~nBTC network is synched: ~p~n", [Top]),
-
-  Callback = callback(Data),
-  Callback(?MODULE, block(Res)),
-  {keep_state, Data2, []};
+  Hash = result(Res),
+  Data4 =
+    case Hash of
+      Top ->
+        Data2;
+      _ ->
+        {ok, Res, Data3} = request(<<"/">>, <<"getblock">>, [Hash, _Verbosity = 2], Data2),
+        Callback = callback(Data3),
+        Callback(?MODULE, block(Res)),
+        lager:debug("~nBTC network is synched: ~p~n", [Top]),
+        Data3
+    end,
+  {keep_state, Data4, [{{timeout, sync}, 1000, _EventContent = []}]};
 
 connected({call, From}, {get_top_block}, Data) ->
   {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
@@ -236,12 +234,19 @@ connected({call, From}, {schedule, Items}, Data) ->
   {keep_state, Data2, []}.
 
 disconnected(enter, _OldState, Data) ->
+  lager:debug("~nBTC network is disconnected ~n"),
+
   {keep_state, Data};
 
 disconnected(state_timeout, _, Data) ->
-  ct:log("~nBTC network connection......~n"),
-  lager:debug("~nBTC network connection......~n"),
-  {next_state, connected, Data};
+  lager:debug("~nBTC network connection attempt......~n"),
+  try
+    {ok, Res, Data2} = request(<<"/">>, <<"getbestblockhash">>, [], Data),
+    Top = result(Res),
+    {next_state, connected, top(Data2, Top)}
+  catch _:_ ->
+    {keep_state, Data, [{state_timeout, 1000, connect}]}
+  end;
 
 disconnected(_, _, Data) ->
   {keep_state, Data, [postpone]}.

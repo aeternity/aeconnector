@@ -1,3 +1,23 @@
+%%% -*- erlang-indent-level: 4 -*-
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 2020, Aeternity Anstalt
+%%% @doc
+%%% This module executes BTC integration acceptance processes across "user" and "delegate" roles
+%%% The process requires opened connection to the BTC network and divided into the next steps
+%%% For "user" role (default):
+%%% 1. Open connection to the network (connect);
+%%% 2. Fetch the hash of the current best block (get_top_block);
+%%% 3. Fetch the block data for predefined pin-pointed hash (get_block_by_hash);
+%%% 4. Synchronize the new mined block (a time depends on BTC network: ~8 min) (sync)
+%%% 5. Close connection (disconnect);
+%%% For "delegate" role:
+%%% 1. Open connection to the network (connect);
+%%% 2. Check available inputs, balance (dry_send_tx);
+%%% 3. Send commitment transaction with predefined payload (send_tx);
+%%% 4. Put scheduled commitments into queue;
+%%% 5. Send scheduled commitments
+%%% 5. Close connection (disconnect);
+%%% @end
 -module(aeconnector_btc_full_node_SUITE).
 
 -export([suite/0]).
@@ -13,6 +33,8 @@
 -export([dry_send_tx/0, dry_send_tx/1, send_tx/0, send_tx/1]).
 -export([get_top_block/0, get_top_block/1]).
 -export([get_block_by_hash/0, get_block_by_hash/1]).
+-export([synchronize/0, synchronize/1]).
+-export([schedule/0, schedule/1]).
 -export([disconnect/0, disconnect/1]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -29,7 +51,7 @@ init_per_suite(Config) ->
   %% TODO: This data should be externally configured!
   Payload = <<"Hyperchains trace">>,
   GenesisHash = <<"0000000068d9d45579eeaf657ac6b446d8ec072a40b9cf7c0d566d57e20c5148">>,
-  Setup = [{payload, Payload}, {genesis_hash, GenesisHash}],
+  Setup = [{payload, Payload}, {test_hash, GenesisHash}],
   lists:append(Setup, Config).
 
 end_per_suite(_Config) ->
@@ -70,8 +92,8 @@ end_per_testcase(_TestCase, _Config) ->
 %%--------------------------------------------------------------------
 groups() ->
   [
-    {user, [sequence], [connect, get_top_block, get_block_by_hash, disconnect]},
-    {delegate, [sequence], [connect, dry_send_tx, send_tx, disconnect]}
+    {user, [sequence], [connect, get_top_block, get_block_by_hash, synchronize, disconnect]},
+    {delegate, [sequence], [connect, dry_send_tx, send_tx, schedule, disconnect]}
   ].
 
 %%--------------------------------------------------------------------
@@ -114,7 +136,7 @@ connect() ->
 %%              the all/0 list or in a test case group for the test case
 %%              to be executed).
 %%--------------------------------------------------------------------
-
+%% TODO: To make Args configurable
 connect(_Config) ->
   Args = #{
     <<"user">> => <<"hyperchains">>,
@@ -145,10 +167,15 @@ get_block_by_hash() ->
   [].
 
 get_block_by_hash(Config) ->
-  Hash = ?config(genesis_hash, Config),
+  Hash = ?config(test_hash, Config),
   {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
   {comment, Block}.
 
+synchronize() ->
+  [].
+
+synchronize(_Config) ->
+  ok.
 
 dry_send_tx() ->
   [].
@@ -164,6 +191,12 @@ send_tx() ->
 send_tx(_Config) ->
   Payload = <<"Hyperchains trace">>,
   ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload).
+
+schedule() ->
+  [].
+
+schedule(_Config) ->
+  ok.
 
 disconnect() ->
   [].
