@@ -8,15 +8,19 @@ An each connector represents a *gateway* into the external blockchain (so called
 
 In fact commitments are payloaded transactions where each transaction procudes a historical entry which lands on blockchain and allows to Hyperchains to track it's state by secure way and decentrilized way. 
 
-You can send transactions for yourself or to make regular payments as *payment gateway* (see detailed [payment gateway guide](https://github.com/aeternity/aeconnector/wiki/Payment-gateway))
+In comparision to the common miners which have to spend a large amount of electricity you have to spend a small amount of transaction fee by sending transactions for yourself or to make regular payments as *payment gateway* (see detailed [payment gateway guide](https://github.com/aeternity/aeconnector/wiki/Payment-gateway)).
 
-In ability to be accepted as "connector" supplied implementation has to satisfy *aeconnector* beahaviour and to pass acceptance control (see [developers guide](https://github.com/aeternity/aeconnector/wiki/Developers-guide))
+In this approach your available balance acts as a main *fuel* ⛽️ , so be sure that you have it enough on the parent chain before you are going to earn rewards for delegate's activity. 
 
-The current supply contains the next implementations (go through the links to see the detailed configuration guide):
+The current supply contains the next implementations 🔌 (go through the links to see the detailed configuration guide):
 
 - [x] [bitcoin (RPC)](https://github.com/aeternity/aeconnector/wiki/Bitcoin-connector) (full node)
 - [ ] [ethereum (ws)](https://github.com/aeternity/aeconnector/wiki/Ethereum-connector) (Geth)
 - [ ] [aeternity (Erlang RPC)](https://github.com/aeternity/aeconnector/wiki/Aeternity-connector) (full node)
+
+In ability to be accepted as "connector" supplied implementation has to satisfy *aeconnector* beahaviour and to pass acceptance control (see [developers guide](https://github.com/aeternity/aeconnector/wiki/Developers-guide))
+
+###### Connectors setup 
 
 
 
