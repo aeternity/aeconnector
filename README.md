@@ -1,5 +1,10 @@
 # aeconnector 🔌
 ###### Overview
+
+Aeconnetor is an extension set which connects [hyperchains](https://github.com/aeternity/hyperchains-whitepaper) to the real world blockchain implementations. 
+Designed with idea to be friendly as possible for a new developers and to allow them provide their own implementations for existed blockchains. 
+In ability to be accepted as "connector" supplied implementation has to satisfy *aeconnector* beahaviour and to pass **acceptance control** (see [developers guide](https://github.com/aeternity/aeconnector/wiki/Developers-guide))
+
 Parent chains interface provider (Hyperchains). The implementation of Hyperchains connector behaviour. 
 The current supply interacts with the next parent chains:
 
