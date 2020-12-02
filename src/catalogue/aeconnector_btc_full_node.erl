@@ -15,7 +15,7 @@
 -export([get_top_block/0, get_block_by_hash/1]).
 -export([disconnect/0]).
 
--export([schedule/1]).
+-export([push_tx/1, pop_tx/0]).
 
 %% gen_statem.
 -export([init/1]).
@@ -42,7 +42,7 @@ connect(Args, Callback) when is_map(Args), is_function(Callback) ->
 dry_send_tx(Delegate, Payload) ->
   gen_statem:call(?MODULE, {dry_send_tx, Delegate, Payload}).
 
--spec send_tx(binary(), binary()) -> ok.
+-spec send_tx(binary(), binary()) -> ok | {error, term()}.
 send_tx(Delegate, Payload) ->
   gen_statem:call(?MODULE, {send_tx, Delegate, Payload}).
 
@@ -54,14 +54,18 @@ get_top_block() ->
 get_block_by_hash(Hash) ->
   gen_statem:call(?MODULE, {get_block_by_hash, Hash}).
 
+%% By this way we can act as payment gateway
+-spec push_tx(item()) -> ok.
+push_tx(Item) ->
+  gen_statem:call(?MODULE, {push_tx, Item}).
+
+-spec pop_tx() -> {ok, item()} | {error, term()}.
+pop_tx() ->
+  gen_statem:call(?MODULE, {pop_tx}).
+
 -spec disconnect() -> ok.
 disconnect() ->
   gen_statem:stop(?MODULE).
-
-%% By this way we can act as payment gateway
--spec schedule([item()]) -> ok | {error, {term(), term()}}.
-schedule(Items) ->
-  gen_statem:call(?MODULE, {schedule, Items}).
 
 %%%===================================================================
 %%%  gen_statem behaviour
@@ -123,7 +127,6 @@ terminate(_Reason, _State, _Data) ->
 
 connected(enter, _OldState, Data) ->
   lager:debug("~nBTC network is connected: ~p~n", [top(Data)]),
-
   {keep_state, Data, [{{timeout, sync}, 0, _EventContent = []}]};
 
 connected({timeout, sync}, _, Data) ->
@@ -135,9 +138,10 @@ connected({timeout, sync}, _, Data) ->
       Top ->
         Data2;
       _ ->
-        {ok, Res, Data3} = request(<<"/">>, <<"getblock">>, [Hash, _Verbosity = 2], Data2),
+        {ok, Res2, Data3} = request(<<"/">>, <<"getblock">>, [Hash, _Verbosity = 2], Data2),
         Callback = callback(Data3),
-        Callback(?MODULE, block(Res)),
+        Callback(?MODULE, block(Res2)),
+        ct:log("~nA hash: ~p the top: ~p~n",[Hash, Top]),
         lager:debug("~nBTC network is synched: ~p~n", [Top]),
         Data3
     end,
@@ -223,15 +227,23 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   ok = gen_statem:reply(From, ok),
   {keep_state, Data5, []};
 
-connected({call, From}, {schedule, Items}, Data) ->
-  Queue2 = lists:foldl(
-    fun (Item, State) -> queue:in(Item, State) end,
-    queue(Data),
-    Items
-  ),
+connected({call, From}, {push_tx, Item}, Data) ->
+  Queue2 = queue:in(Item, queue(Data)),
   Data2 = queue(Data, Queue2),
   ok = gen_statem:reply(From, ok),
-  {keep_state, Data2, []}.
+  {keep_state, Data2, []};
+
+connected({call, From}, {pop_tx}, Data) ->
+  Queue = queue(Data),
+  try
+    {{value, Item}, Queue2} = queue:out_r(Queue),
+    ok = gen_statem:reply(From, {ok, Item}),
+    Data2 = queue(Data, Queue2),
+    {keep_state, Data2, []}
+  catch E:R ->
+    ok = gen_statem:reply(From, {error, {E, R}}),
+    {keep_state, Data, []}
+  end.
 
 disconnected(enter, _OldState, Data) ->
   lager:debug("~nBTC network is disconnected ~n"),

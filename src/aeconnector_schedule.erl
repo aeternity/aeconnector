@@ -14,9 +14,10 @@
 -export([from_file/1]).
 -export([item/4]).
 
+-export([is_item/1]).
+
 -record(item, { address::binary(), amount::float(), fee::float(), comment::binary() }).
 
--type schedule() :: list().
 -type item() :: #item{}.
 
 -export_type([item/0]).
@@ -46,3 +47,9 @@ fee(Item) ->
 -spec comment(item()) -> binary().
 comment(Item) ->
   Item#item.comment.
+
+-spec is_item(term()) -> boolean().
+is_item(#item{}) ->
+  true;
+is_item(_) ->
+  false.

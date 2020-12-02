@@ -2,15 +2,15 @@
 %%%-------------------------------------------------------------------
 %%% @copyright (C) 2020, Aeternity Anstalt
 %%% @doc
-%%% This module executes BTC integration acceptance processes across "user" and "delegate" roles
-%%% The process requires opened connection to the BTC network and divided into the next steps
-%%% For "user" role (default):
+%%% This module executes BTC integration acceptance processes across "user" and "delegate" roles.
+%%% The process requires opened connection to the BTC network and divided into the next steps:
+%%% For the "user" role (default)
 %%% 1. Open connection to the network (connect);
 %%% 2. Fetch the hash of the current best block (get_top_block);
 %%% 3. Fetch the block data for predefined pin-pointed hash (get_block_by_hash);
 %%% 4. Synchronize the new mined block (a time depends on BTC network: ~8 min) (sync)
 %%% 5. Close connection (disconnect);
-%%% For "delegate" role:
+%%% For the "delegate" role
 %%% 1. Open connection to the network (connect);
 %%% 2. Check available inputs, balance (dry_send_tx);
 %%% 3. Send commitment transaction with predefined payload (send_tx);
@@ -34,7 +34,8 @@
 -export([get_top_block/0, get_top_block/1]).
 -export([get_block_by_hash/0, get_block_by_hash/1]).
 -export([synchronize/0, synchronize/1]).
--export([schedule/0, schedule/1]).
+-export([push_tx/0, push_tx/1]).
+-export([pop_tx/0, pop_tx/1]).
 -export([disconnect/0, disconnect/1]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -44,14 +45,21 @@
 %%--------------------------------------------------------------------
 
 suite() ->
-  [{timetrap,{minutes,1}}].
+  [{timetrap,{minutes,60}}].
 
 init_per_suite(Config) ->
   ok = lager:start(),
   %% TODO: This data should be externally configured!
   Payload = <<"Hyperchains trace">>,
   GenesisHash = <<"0000000068d9d45579eeaf657ac6b446d8ec072a40b9cf7c0d566d57e20c5148">>,
-  Setup = [{payload, Payload}, {test_hash, GenesisHash}],
+  ReturnAddress = ?MODULE,
+  Setup =
+    [
+      {payload, Payload},
+      {test_hash, GenesisHash},
+      {return_address, ReturnAddress},
+      {timeout, 60*60*1000}
+    ],
   lists:append(Setup, Config).
 
 end_per_suite(_Config) ->
@@ -92,8 +100,8 @@ end_per_testcase(_TestCase, _Config) ->
 %%--------------------------------------------------------------------
 groups() ->
   [
-    {user, [sequence], [connect, get_top_block, get_block_by_hash, synchronize, disconnect]},
-    {delegate, [sequence], [connect, dry_send_tx, send_tx, schedule, disconnect]}
+    {user, [sequence], [connect, get_top_block, get_block_by_hash, synchronize, disconnect]}
+%%    {delegate, [sequence], [connect, dry_send_tx, push_tx, send_tx, pop_tx, disconnect]}
   ].
 
 %%--------------------------------------------------------------------
@@ -111,7 +119,10 @@ groups() ->
 %%              are to be executed.
 %%--------------------------------------------------------------------
 all() ->
-  [{group, user}, {group, delegate}].
+  [
+    {group, user}
+%%    {group, delegate}
+  ].
 
 %%--------------------------------------------------------------------
 %% TEST CASES
@@ -137,7 +148,7 @@ connect() ->
 %%              to be executed).
 %%--------------------------------------------------------------------
 %% TODO: To make Args configurable
-connect(_Config) ->
+connect(Config) ->
   Args = #{
     <<"user">> => <<"hyperchains">>,
     <<"password">> => <<"qwerty">>,
@@ -152,7 +163,12 @@ connect(_Config) ->
     <<"min">> => 0.001,
     <<"fee">> => 0.0009
   },
-  Callback = fun (_Con, Block) -> ct:log(info, "~nMined block: ~p~n", [Block]) end,
+  ReturnAddress = ?config(return_address, Config),
+  Callback =
+    fun (_Con, Block) ->
+      ct:log(info, "~nMined block: ~p~n", [Block]),
+      ReturnAddress ! Block
+    end,
   {ok, Pid} = aeconnector:connect(btc_conncetor(), Args, Callback),
   {comment, Pid}.
 
@@ -161,6 +177,7 @@ get_top_block() ->
 
 get_top_block(_Config) ->
   {ok, Hash} = aeconnector:get_top_block(btc_conncetor()),
+  true = is_binary(Hash),
   {comment, Hash}.
 
 get_block_by_hash() ->
@@ -169,13 +186,24 @@ get_block_by_hash() ->
 get_block_by_hash(Config) ->
   Hash = ?config(test_hash, Config),
   {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
+  true = aeconnector_block:is_block(Block),
   {comment, Block}.
 
 synchronize() ->
   [].
 
-synchronize(_Config) ->
-  ok.
+synchronize(Config) ->
+  ReturnAddress = ?config(return_address, Config),
+  Timeout = ?config(timeout, Config),
+  erlang:register(ReturnAddress, self()),
+  receive
+    Block ->
+      true = aeconnector_block:is_block(Block),
+      {comment, Block}
+  after
+    Timeout ->
+      ct:fail("~nSynchronization timeout: ~p~n", [Timeout])
+  end.
 
 dry_send_tx() ->
   [].
@@ -185,17 +213,35 @@ dry_send_tx(_Config) ->
   true = aeconnector:dry_send_tx(btc_conncetor(), <<"TEST">>, Payload),
   ok.
 
+push_tx() ->
+  [].
+
+push_tx(_Config) ->
+  Radek = <<"tb1qdaluhxgy9vqd0zjwa8chlwdfn78dfc0shsgtyq">>,
+  Grzegorz = <<"tb1qya6tntgs9gygacfvcx5fkyzf8vu7j6g5yf4e6x">>,
+  Empty = <<"tb1q9dqgds2getn6yt78rdqmt0qyndwyu2xkyc9d3d">>,
+  Scheduled = [
+    aeconnector_schedule:item(Radek, 0.001, 0.0009, <<"Few bucks to help survive in Munich">>),
+    aeconnector_schedule:item(Grzegorz, 0.001, 0.0009, <<"Ticket to visit raccoons in a zoo">>),
+    aeconnector_schedule:item(Empty, 0.001, 0.0009, <<"">>)
+  ],
+  [ok = aeconnector:push_tx(btc_conncetor(), Item) || Item <- Scheduled],
+  ok.
+
+pop_tx() ->
+  [].
+
+pop_tx(_Config) ->
+  {ok, Item} = aeconnector:pop_tx(btc_conncetor()),
+  true = aeconnector_schedule:is_item(Item),
+  ok.
+
 send_tx() ->
   [].
 
 send_tx(_Config) ->
   Payload = <<"Hyperchains trace">>,
-  ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload).
-
-schedule() ->
-  [].
-
-schedule(_Config) ->
+  [ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload) || lists:seq(1, 3)],
   ok.
 
 disconnect() ->
