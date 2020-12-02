@@ -22,6 +22,25 @@ In ability to be accepted as "connector" supplied implementation has to satisfy 
 
 ###### Connectors setup 
 
+<p align="center">
+  <img src="/doc/src/HyperchainsConnectorsMain.png">
+  <br>
+    <em>Main connector's setup #1 </em>
+</p>
+
+
+<p align="center">
+  <img src="/doc/src/HyperchainsConnectorsMainReplica.png">
+  <br>
+    <em>Main + replica connector's setup #2 </em>
+</p>
+
+<p align="center">
+  <img src="/doc/src/HyperchainsConnectorsElectionHistory.png">
+  <br>
+    <em>Main (election) + history connector's setup #3 </em>
+</p>
+
 
 
 
