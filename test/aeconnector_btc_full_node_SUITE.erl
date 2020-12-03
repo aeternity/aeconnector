@@ -101,7 +101,7 @@ end_per_testcase(_TestCase, _Config) ->
 groups() ->
   [
     {user, [sequence], [connect, get_top_block, get_block_by_hash, synchronize, disconnect]}
-%%    {delegate, [sequence], [connect, dry_send_tx, push_tx, send_tx, pop_tx, disconnect]}
+    {delegate, [sequence], [connect, dry_send_tx, push_tx, send_tx, pop_tx, disconnect]}
   ].
 
 %%--------------------------------------------------------------------
