@@ -98,10 +98,12 @@ end_per_testcase(_TestCase, _Config) ->
 %%
 %% Description: Returns a list of test case group definitions.
 %%--------------------------------------------------------------------
+%% TODO: To make nested, conditional groups
 groups() ->
   [
-    {user, [sequence], [connect, get_top_block, get_block_by_hash, synchronize, disconnect]}
-    {delegate, [sequence], [connect, dry_send_tx, push_tx, send_tx, pop_tx, disconnect]}
+    {user, [sequence], [connect, get_top_block, get_block_by_hash, disconnect]},
+    {delegate, [sequence], [connect, dry_send_tx, push_tx, pop_tx, send_tx, disconnect]}
+%%    {network, [sequence], [connect, synchronize, disconnect]}
   ].
 
 %%--------------------------------------------------------------------
@@ -120,8 +122,9 @@ groups() ->
 %%--------------------------------------------------------------------
 all() ->
   [
-    {group, user}
-%%    {group, delegate}
+    {group, user},
+    {group, delegate}
+%%    {group, network}
   ].
 
 %%--------------------------------------------------------------------
@@ -217,9 +220,9 @@ push_tx() ->
   [].
 
 push_tx(_Config) ->
-  Radek = <<"tb1qdaluhxgy9vqd0zjwa8chlwdfn78dfc0shsgtyq">>,
-  Grzegorz = <<"tb1qya6tntgs9gygacfvcx5fkyzf8vu7j6g5yf4e6x">>,
-  Empty = <<"tb1q9dqgds2getn6yt78rdqmt0qyndwyu2xkyc9d3d">>,
+  Radek = <<"tb1qczlzkzg24dzv08ggs0y080zax2hmejd8k2x00l">>,
+  Grzegorz = <<"2NGZfw3NhM7NgRkY8RD8DoPkDDDK31QGVeh">>,
+  Empty = <<"2NGZfw3NhM7NgRkY8RD8DoPkDDDK31QGVeh">>,
   Scheduled = [
     aeconnector_schedule:item(Radek, 0.001, 0.0009, <<"Few bucks to help survive in Munich">>),
     aeconnector_schedule:item(Grzegorz, 0.001, 0.0009, <<"Ticket to visit raccoons in a zoo">>),
@@ -241,7 +244,7 @@ send_tx() ->
 
 send_tx(_Config) ->
   Payload = <<"Hyperchains trace">>,
-  [ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload) || lists:seq(1, 3)],
+  [ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload) || _ <- lists:seq(0, 1)],
   ok.
 
 disconnect() ->
