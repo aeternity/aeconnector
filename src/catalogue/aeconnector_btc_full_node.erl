@@ -23,7 +23,7 @@
 -export([callback_mode/0]).
 
 %% transitions
--export([connected/3, credited/3, uncredited/3, disconnected/3]).
+-export([connected/3, disconnected/3]).
 
 -type block() :: aeconnector_block:block().
 
@@ -84,16 +84,14 @@ disconnect() ->
     callback::function(),
     %% The current top block hash
     top::binary(),
-    %% The current commitment hash
-    tx::binary(),
+    %% URL for connector's announcements
+    web_hook::list(),
     %% Request timeout
     timeout::integer(),
     %% Established connection timeout
     connect_timeout::integer(),
     %% Allowed redirect
     autoredirect::boolean(),
-    %% State transitions https callbacks (URI's)
-    connected::list(), credited::list(), uncredited::list(), disconnected::list(),
     %% Selected wallet
     wallet::binary(),
     %% Queued commitments list
@@ -110,24 +108,13 @@ disconnect() ->
 
 init(Data) ->
   try
-    {ok, Res, Data2} = getblockchaininfo(Data),
-    Info = result(Res),
+    {ok, Info, Data2} = getblockchaininfo(Data),
     ct:log("~nBTC network info: ~p~n", [Info]), %% lager:debug
-    Wallet = wallet(Data2),
-    case Wallet of
-      _ when is_binary(Wallet) ->
-        {ok, Listunspent, Data2} = listunspent(1, 9999999, [], true, #{ <<"minimumAmount">> => min(Data) }, Data),
-        case Listunspent of
-          [] ->
-            {ok, connected, Data2};
-          _ ->
-            {ok, credited, Data2}
-        end;
-      _ ->
-        {ok, connected, Data2}
-    end
+    SyncTimeOut = {{timeout, sync}, 0, _EventContent = []},
+    {ok, connected, Data2, [SyncTimeOut]}
   catch _:_ ->
-    {ok, disconnected, Data, [{state_timeout, 1000, connect}]}
+    ConnectTimeOut = {state_timeout, 1000, connect},
+    {ok, disconnected, Data, [ConnectTimeOut]}
   end.
 
 callback_mode() ->
@@ -143,12 +130,9 @@ terminate(_Reason, _State, _Data) ->
 connected(enter, _OldState, Data) ->
   ct:log("~nBTC network is connected ~n"), %% lager:debug
   %% TODO Announce http callback
-  {keep_state, Data, [{{timeout, sync}, 0, _EventContent = []}]};
+  {keep_state, Data, []};
 
-connected(EventType, EventContent, Data) ->
-  common(EventType, EventContent, Data).
-
-common({timeout, sync}, _, Data) ->
+connected({timeout, sync}, _, Data) ->
   Top = top(Data),
   {ok, Hash, Data2} = getbestblockhash(Data),
   Data4 =
@@ -164,25 +148,25 @@ common({timeout, sync}, _, Data) ->
     end,
   {keep_state, Data4, [{{timeout, sync}, 1000, _EventContent = []}]};
 
-common({call, From}, {get_top_block}, Data) ->
+connected({call, From}, {get_top_block}, Data) ->
   {ok, Hash, Data2} = getbestblockhash(Data),
 
   ok = gen_statem:reply(From, {ok, Hash}),
   {keep_state, Data2, []};
 
-common({call, From}, {get_block_by_hash, Hash}, Data) ->
+connected({call, From}, {get_block_by_hash, Hash}, Data) ->
   {ok, Block, Data2} = getblock(Hash, _Verbosity = 2, Data),
   Reply = Block,
   ok = gen_statem:reply(From, {ok, Reply}),
   {keep_state, Data2, []};
 
-common({call, From}, {push_tx, Item}, Data) ->
+connected({call, From}, {push_tx, Item}, Data) ->
   Queue2 = queue:in(Item, queue(Data)),
   Data2 = queue(Data, Queue2),
   ok = gen_statem:reply(From, ok),
   {keep_state, Data2, []};
 
-common({call, From}, {pop_tx}, Data) ->
+connected({call, From}, {pop_tx}, Data) ->
   Queue = queue(Data),
   try
     {{value, Item}, Queue2} = queue:out_r(Queue),
@@ -192,83 +176,72 @@ common({call, From}, {pop_tx}, Data) ->
   catch E:R ->
     ok = gen_statem:reply(From, {error, {E, R}}),
     {keep_state, Data, []}
-  end.
+  end;
 
-credited(enter, _OldState, Data) ->
-  ct:log("~nBTC wallet ~p is credited: ~p~n", [wallet(Data)]),
-  {keep_state, Data, []};
-
-credited({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
-  %% NOTE: A number of confirmations has increased in comparison to initial check;
+connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
+  %% NOTE: A number of confirmations has increased to make sure that validator's wallet is ready;
   {ok, Listunspent, Data2} = listunspent(6, 9999999, [], true, #{ <<"minimumAmount">> => min(Data) }, Data),
-  Reply = Listunspent /= [],
-  ok = gen_statem:reply(From, Reply),
+  ok = gen_statem:reply(From, Listunspent /= []),
   {keep_state, Data2, []};
 
-credited({call, From}, {send_tx, _Delegate, Payload}, Data) ->
+connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   %% Min confirmations is lower with idea to support "hot" balance update for validators;
   {ok, Listunspent, Data2} = listunspent(1, 9999999, [], true, #{ <<"minimumAmount">> => min(Data) }, Data),
   ct:log("~nListunspent: ~p~n",[Listunspent]),
-  case Listunspent of
-    [] ->
-      {next_state, uncredited, Data2};
-    [Input|_] ->
-      TxId = maps:get(<<"txid">>, Input), Vout = maps:get(<<"vout">>, Input),
-      %% NOTE:
-      %% a) We use the first available input which matches the criteria (the list will be updated due to the sender activity);
-      %% b) txid from the Input;
-      %% c) vout is set to 0 accordingly to unspendable protocol for null data tx'ss;
-      %% d) Payload is encoded into hex format;
-      HexData = to_hex(Payload),
-      Inputs = [#{<<"txid">> => TxId, <<"vout">> => Vout}],
-      Outputs = #{<<"data">> => HexData},
-      %% NOTE:
-      %% The payment address is made from queued specification (otherwise the same input is used)
-      {Out, Data3} = out(Data2),
-      Payment =
-        case Out of
-          empty ->
-            Address = maps:get(<<"address">>, Input), AmountIn = maps:get(<<"amount">>, Input),
-            AmountOut = float_to_binary(AmountIn - fee(Data3), [{decimals, 4}]),
-            ct:log("~nDefault commitment (address: ~p, amount: ~p)~n", [Address, AmountOut]),
-            #{Address => AmountOut};
-          {value, Item} ->
-            Address = aeconnector_schedule:address(Item),
-            _Amount = aeconnector_schedule:amount(Item),
-            _Fee = aeconnector_schedule:fee(Item),
-            Comment = aeconnector_schedule:comment(Item),
-            AmountOut = 0,
-            %% TODO To calculate output;
-            ct:log("~nScheduled commitment (address: ~p, amount: ~p, comment: ~p)~n", [Address, AmountOut, Comment]),
-            #{Address => AmountOut}
-        end,
+  try
+    Listunspent == [] andalso throw(<<"Listunspent is empty">>),
+    [Input|_] = Listunspent,
+    TxId = maps:get(<<"txid">>, Input), Vout = maps:get(<<"vout">>, Input),
+    %% NOTE:
+    %% a) We use the first available input which matches the criteria (the list will be updated due to the sender activity);
+    %% b) txid from the Input;
+    %% c) vout is set to 0 accordingly to unspendable protocol for null data tx'ss;
+    %% d) Payload is encoded into hex format;
+    HexData = to_hex(Payload),
+    Inputs = [#{<<"txid">> => TxId, <<"vout">> => Vout}],
+    Outputs = #{<<"data">> => HexData},
+    %% NOTE:
+    %% The payment address is made from queued specification (otherwise the same input is used)
+    {Out, Data3} = out(Data2),
+    Payment =
+      case Out of
+        empty ->
+          Address = maps:get(<<"address">>, Input), AmountIn = maps:get(<<"amount">>, Input),
+          AmountOut = float_to_binary(AmountIn - fee(Data3), [{decimals, 4}]),
+          ct:log("~nDefault commitment (address: ~p, amount: ~p)~n", [Address, AmountOut]),
+          #{Address => AmountOut};
+        {value, Item} ->
+          Address = aeconnector_schedule:address(Item),
+          _Amount = aeconnector_schedule:amount(Item),
+          _Fee = aeconnector_schedule:fee(Item),
+          Comment = aeconnector_schedule:comment(Item),
+          AmountOut = 0,
+          %% TODO To calculate output;
+          ct:log("~nScheduled commitment (address: ~p, amount: ~p, comment: ~p)~n", [Address, AmountOut, Comment]),
+          #{Address => AmountOut}
+      end,
 
-      Outputs2 = maps:merge(Outputs, Payment),
-      {ok, RawTx, Data4} = createrawtransaction(Inputs, Outputs2, Data3),
-      ct:log("~ncreaterawtransaction: ~p~n",[RawTx]),
+    Outputs2 = maps:merge(Outputs, Payment),
+    {ok, RawTx, Data4} = createrawtransaction(Inputs, Outputs2, Data3),
+    ct:log("~ncreaterawtransaction: ~p~n",[RawTx]),
 
-      {ok, Hex, Data5} = signrawtransactionwithwallet(RawTx, Data4),
-      ct:log("~nsignrawtransactionwithwallet: ~p~n",[Hex]),
+    {ok, Hex, Data5} = signrawtransactionwithwallet(RawTx, Data4),
+    ct:log("~nsignrawtransactionwithwallet: ~p~n",[Hex]),
 
-      {ok, Hex, Data6} = sendrawtransaction(Hex, Data5),
-      ct:log("~nsendrawtransaction: ~p~n",[Hex]),
-      ok = gen_statem:reply(From, ok),
-      {keep_state, Data6, []}
-  end;
-
-credited(EventType, EventContent, Data) ->
-  common(EventType, EventContent, Data).
-
-uncredited(enter, _OldState, Data) ->
-  ct:log("~nBTC wallet ~p is uncredited: ~p~n", [wallet(Data)]),
-  {keep_state, Data, []};
-
-uncredited(EventType, EventContent, Data) ->
-  common(EventType, EventContent, Data).
+    {ok, Hex, Data6} = sendrawtransaction(Hex, Data5),
+    ct:log("~nsendrawtransaction: ~p~n",[Hex]),
+    %% TODO Announce http callback with commitment TxId
+    %% The commitment hash announcement %% TODO to send via HTTP
+    ok = gen_statem:reply(From, ok),
+    {keep_state, Data6, []}
+  catch E:R ->
+    ok = gen_statem:reply(From, {error, {E, R}}),
+    {keep_state, Data2, []}
+  end.
 
 disconnected(enter, _OldState, Data) ->
   ct:log("~nBTC network is disconnected~n"),
-
+  %% TODO Announce http callback
   {keep_state, Data};
 
 disconnected(state_timeout, _, Data) ->
@@ -281,7 +254,7 @@ disconnected(state_timeout, _, Data) ->
   end;
 
 disconnected(_, _, Data) ->
-  {keep_state, Data, [postpone]}.
+  {keep_state, Data, []}.
 
 %%%===================================================================
 %%%  Data access layer
