@@ -31,7 +31,7 @@ The monolith setup schema which is used for the MVP of Hyperchains (the main con
 <p align="center">
   <img src="/doc/src/HyperchainsConnectorsMain.png">
   <br>
-    <em>Monolith connector's setup #1 </em>
+    <em>Monolith connector setup #1 </em>
 </p>
 
 ### Setup #2
@@ -41,7 +41,7 @@ Replica supported setup. Was designed to switch attached blockchain in the case 
 <p align="center">
   <img src="/doc/src/HyperchainsConnectorsMainReplica.png">
   <br>
-    <em>Main + replica connector's setup #2 </em>
+    <em>Replica connector setup #2 </em>
 </p>
 
 ### Setup #3
@@ -51,7 +51,7 @@ History keeper setup (please note that currently in development process). This s
 <p align="center">
   <img src="/doc/src/HyperchainsConnectorsElectionHistory.png">
   <br>
-    <em>Main (election) + history connector's setup #3 </em>
+    <em>History keeper (election/history) connector setup #3 </em>
 </p>
 
 
