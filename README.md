@@ -31,7 +31,7 @@ The monolith setup schema which is used for the MVP of Hyperchains (the main con
 <p align="center">
   <img src="/doc/src/HyperchainsConnectorsMain.png">
   <br>
-    <em>Main connector's setup #1 </em>
+    <em>Monolith connector's setup #1 </em>
 </p>
 
 ### Setup #2
