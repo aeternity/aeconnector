@@ -24,7 +24,7 @@ In ability to be accepted as "connector" supplied implementation has to satisfy 
 
 Hyperchains can manage connector's deployment strategies and supports 3 integration scenarios (Bitcoin, Ethereum, Aeternity blockchains are listed for example):
 
-### Setup #1
+### Setup #1 (monolith)
 
 The monolith setup schema which is used for the MVP of Hyperchains (the main connector which acts as election engine and keeps synched view):   
 
@@ -34,7 +34,7 @@ The monolith setup schema which is used for the MVP of Hyperchains (the main con
     <em>Monolith connector setup #1 </em>
 </p>
 
-### Setup #2
+### Setup #2 (replica)
  
 Replica supported setup. Was designed to switch attached blockchain in the case of "service denied" (decision can be made automatically): 
 
@@ -44,9 +44,9 @@ Replica supported setup. Was designed to switch attached blockchain in the case 
     <em>Replica connector setup #2 </em>
 </p>
 
-### Setup #3
+### Setup #3 (shard)
 
-History keeper setup (please note that currently in development process). This setup allows to decouple *election engine* and *security provider* roles and assumes the usage of the most scalable and faster blockchain as election engine and the older one as a security provider:
+Shard setup (history keeper/ election master) setup (please note that currently in development process). This setup allows to decouple *election engine* and *security provider* roles and assumes the usage of the most scalable and faster blockchain as election engine and the older one as a security provider:
 
 <p align="center">
   <img src="/doc/src/HyperchainsConnectorsElectionHistory.png">
