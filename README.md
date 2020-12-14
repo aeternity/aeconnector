@@ -26,7 +26,7 @@ Hyperchains can manage connector's deployment strategies and supports 3 integrat
 
 ### Setup #1
 
-The simplest setup schema which is used for the MVP of Hyperchains (the main connector which acts as election engine and keeps synched view):   
+The monolith setup schema which is used for the MVP of Hyperchains (the main connector which acts as election engine and keeps synched view):   
 
 <p align="center">
   <img src="/doc/src/HyperchainsConnectorsMain.png">
