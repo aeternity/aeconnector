@@ -46,12 +46,12 @@ Replica supported setup. Was designed to switch attached blockchain in the case 
 
 ### Setup #3 (shard)
 
-Shard setup (history keeper/ election master) setup (please note that currently in development process). This setup allows to decouple *election engine* and *security provider* roles and assumes the usage of the most scalable and faster blockchain as election engine and the older one as a security provider:
+Shard setup (history keeper/election master) setup (please note that currently in development process). This setup allows to decouple *election engine* and *security provider* roles and assumes the usage of the most scalable and faster blockchain as election engine and the older one as a security provider:
 
 <p align="center">
   <img src="/doc/src/HyperchainsConnectorsElectionHistory.png">
   <br>
-    <em>History keeper (election/history) connector setup #3 </em>
+    <em>Shard connector setup #3 </em>
 </p>
 
 
