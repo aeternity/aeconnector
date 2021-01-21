@@ -32,7 +32,6 @@
 %%%===================================================================
 %%%  aeconnector behaviour
 %%%===================================================================
-
 -spec connect(map(), function()) -> {ok, pid()} | {error, term()}.
 connect(Args, Callback) when is_map(Args), is_function(Callback) ->
   Data = data(Args, Callback),
@@ -70,7 +69,6 @@ disconnect() ->
 %%%===================================================================
 %%%  gen_statem behaviour
 %%%===================================================================
-
 -record(data, {
     %% RPC auth
     auth::list(),
@@ -126,7 +124,6 @@ terminate(_Reason, _State, _Data) ->
 %%%===================================================================
 %%%  State machine callbacks
 %%%===================================================================
-%% TODO: TO support credited/uncredited, connected/disconnected callbacks
 connected(enter, _OldState, Data) ->
   ct:log("~nBTC network is connected ~n"), %% lager:debug
   %% TODO Announce http callback
@@ -259,7 +256,6 @@ disconnected(_, _, Data) ->
 %%%===================================================================
 %%%  Data access layer
 %%%===================================================================
-
 -spec out(data()) -> {{value, item()}, data()} | {empty, data()}.
 out(Data) ->
   Queue = queue(Data),
@@ -374,7 +370,6 @@ top(Data, Top) ->
 %%%===================================================================
 %%%  HTTP protocol
 %%%===================================================================
-
 url(Host, Port, true = _SSL) when is_list(Host), is_integer(Port) ->
   path("https://", Host, Port);
 url(Host, Port, _) when is_list(Host), is_integer(Port) ->
@@ -433,7 +428,6 @@ rpc(Method, Params, Id, Version) ->
 %%%===================================================================
 %%%  BTC protocol
 %%%===================================================================
-
 -spec getblockchaininfo(data()) -> {ok, map(), data()} | {error, term()}.
 getblockchaininfo(Data) ->
   try
@@ -529,7 +523,6 @@ block(Response) ->
       aeconnector_tx:test_tx(Vin, Vout) end|| Tx <- maps:get(<<"tx">>, Result)
   ],
   aeconnector_block:block(Height, Hash, PrevHash, Txs).
-
 
 -spec to_hex(binary()) -> binary().
 to_hex(Payload) ->
