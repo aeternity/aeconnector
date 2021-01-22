@@ -34,7 +34,6 @@
 %%%===================================================================
 -spec connect(map(), function()) -> {ok, pid()} | {error, term()}.
 connect(Args, Callback) when is_map(Args), is_function(Callback) ->
-  lager:info("~nArgs: ~p~n",[Args]),
   Data = data(Args, Callback),
   gen_statem:start({local, ?MODULE}, ?MODULE, Data, []).
 
@@ -111,8 +110,7 @@ init(Data) ->
     lager:info("~nBTC network info: ~p~n", [Info]), %% ct:log
     SyncTimeOut = {{timeout, sync}, 0, _EventContent = []},
     {ok, connected, Data2, [SyncTimeOut]}
-  catch E:R ->
-    lager:info("~nE: ~p R: ~p~n",[E, R]),
+  catch _E:_R ->
     ConnectTimeOut = {state_timeout, 1000, connect},
     {ok, disconnected, Data, [ConnectTimeOut]}
   end.
@@ -127,7 +125,6 @@ terminate(_Reason, _State, _Data) ->
 %%%  State machine callbacks
 %%%===================================================================
 connected(enter, _OldState, Data) ->
-  lager:info("~nBTC network is connected ~n"),
   %% TODO Announce http callback
   {keep_state, Data, []};
 
@@ -143,7 +140,7 @@ connected({timeout, sync}, _, Data) ->
         Callback = callback(Data3),
         catch(Callback(?MODULE, block(Res2))),
         lager:info("~nBTC network is synched: ~p~n", [Top]),
-        Data3
+        top(Data3, Hash)
     end,
   {keep_state, Data4, [{{timeout, sync}, 1000, _EventContent = []}]};
 
@@ -239,7 +236,6 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   end.
 
 disconnected(enter, _OldState, Data) ->
-  lager:info("~nBTC network is disconnected~n"),
   %% TODO Announce http callback
   {keep_state, Data};
 
@@ -401,7 +397,7 @@ request(Path, Method, Params, Data) ->
       ],
     Opt = [],
     {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
-    lager:info("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
+    lager:debug("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
     {ok, jsx:decode(list_to_binary(Res), [return_maps]), DataUp}
   catch E:R:S ->
     lager:error("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
