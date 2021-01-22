@@ -176,7 +176,7 @@ connected({call, From}, {pop_tx}, Data) ->
 
 connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
   %% NOTE: A number of confirmations has increased to make sure that validator's wallet is ready;
-  {ok, Listunspent, Data2} = listunspent(6, 9999999, [], true, #{ <<"minimumAmount">> => min(Data) }, Data),
+  {ok, Listunspent, Data2} = listunspent(1, 9999999, [], true, #{ <<"minimumAmount">> => min(Data) }, Data),
   ok = gen_statem:reply(From, Listunspent /= []),
   {keep_state, Data2, []};
 
@@ -224,8 +224,8 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
     {ok, Hex, Data5} = signrawtransactionwithwallet(RawTx, Data4),
     lager:info("~nsignrawtransactionwithwallet: ~p~n",[Hex]),
 
-    {ok, Hex, Data6} = sendrawtransaction(Hex, Data5),
-    lager:info("~nsendrawtransaction: ~p~n",[Hex]),
+    {ok, Hash, Data6} = sendrawtransaction(Hex, Data5),
+    lager:info("~nsendrawtransaction: ~p~n",[Hash]),
     %% TODO Announce http callback with commitment TxId
     %% The commitment hash announcement %% TODO to send via HTTP
     ok = gen_statem:reply(From, ok),
