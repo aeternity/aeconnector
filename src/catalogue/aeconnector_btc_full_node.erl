@@ -34,6 +34,7 @@
 %%%===================================================================
 -spec connect(map(), function()) -> {ok, pid()} | {error, term()}.
 connect(Args, Callback) when is_map(Args), is_function(Callback) ->
+  ct:log("~nArgs: ~p~n",[Args]),
   Data = data(Args, Callback),
   gen_statem:start({local, ?MODULE}, ?MODULE, Data, []).
 
