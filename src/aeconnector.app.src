@@ -5,7 +5,6 @@
     {vsn, "0.0.1"},
     {registered, []},
     {applications, [kernel, stdlib, lager, jsx]},
-    {mod,{aeconnector_app,[]}},
     {env,[]},
     {modules, []},
     {maintainers, []},
