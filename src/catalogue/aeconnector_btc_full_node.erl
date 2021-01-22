@@ -111,7 +111,8 @@ init(Data) ->
     ct:log("~nBTC network info: ~p~n", [Info]), %% lager:debug
     SyncTimeOut = {{timeout, sync}, 0, _EventContent = []},
     {ok, connected, Data2, [SyncTimeOut]}
-  catch _:_ ->
+  catch E:R ->
+    ct:log("~nE: ~p R: ~p~n",[E, R]),
     ConnectTimeOut = {state_timeout, 1000, connect},
     {ok, disconnected, Data, [ConnectTimeOut]}
   end.
