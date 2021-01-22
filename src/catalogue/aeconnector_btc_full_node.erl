@@ -34,7 +34,7 @@
 %%%===================================================================
 -spec connect(map(), function()) -> {ok, pid()} | {error, term()}.
 connect(Args, Callback) when is_map(Args), is_function(Callback) ->
-  ct:log("~nArgs: ~p~n",[Args]),
+  lager:info("~nArgs: ~p~n",[Args]),
   Data = data(Args, Callback),
   gen_statem:start({local, ?MODULE}, ?MODULE, Data, []).
 
@@ -108,11 +108,11 @@ disconnect() ->
 init(Data) ->
   try
     {ok, Info, Data2} = getblockchaininfo(Data),
-    ct:log("~nBTC network info: ~p~n", [Info]), %% lager:debug
+    lager:info("~nBTC network info: ~p~n", [Info]), %% ct:log
     SyncTimeOut = {{timeout, sync}, 0, _EventContent = []},
     {ok, connected, Data2, [SyncTimeOut]}
   catch E:R ->
-    ct:log("~nE: ~p R: ~p~n",[E, R]),
+    lager:info("~nE: ~p R: ~p~n",[E, R]),
     ConnectTimeOut = {state_timeout, 1000, connect},
     {ok, disconnected, Data, [ConnectTimeOut]}
   end.
@@ -127,7 +127,7 @@ terminate(_Reason, _State, _Data) ->
 %%%  State machine callbacks
 %%%===================================================================
 connected(enter, _OldState, Data) ->
-  ct:log("~nBTC network is connected ~n"), %% lager:debug
+  lager:info("~nBTC network is connected ~n"),
   %% TODO Announce http callback
   {keep_state, Data, []};
 
@@ -142,7 +142,7 @@ connected({timeout, sync}, _, Data) ->
         {ok, Res2, Data3} = getblock(Hash, _Verbosity = 2, Data),
         Callback = callback(Data3),
         catch(Callback(?MODULE, block(Res2))),
-        ct:log("~nBTC network is synched: ~p~n", [Top]),
+        lager:info("~nBTC network is synched: ~p~n", [Top]),
         Data3
     end,
   {keep_state, Data4, [{{timeout, sync}, 1000, _EventContent = []}]};
@@ -186,7 +186,7 @@ connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
 connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   %% Min confirmations is lower with idea to support "hot" balance update for validators;
   {ok, Listunspent, Data2} = listunspent(1, 9999999, [], true, #{ <<"minimumAmount">> => min(Data) }, Data),
-  ct:log("~nListunspent: ~p~n",[Listunspent]),
+  lager:info("~nListunspent: ~p~n",[Listunspent]),
   try
     Listunspent == [] andalso throw(<<"Listunspent is empty">>),
     [Input|_] = Listunspent,
@@ -207,7 +207,7 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
         empty ->
           Address = maps:get(<<"address">>, Input), AmountIn = maps:get(<<"amount">>, Input),
           AmountOut = float_to_binary(AmountIn - fee(Data3), [{decimals, 4}]),
-          ct:log("~nDefault commitment (address: ~p, amount: ~p)~n", [Address, AmountOut]),
+          lager:info("~nDefault commitment (address: ~p, amount: ~p)~n", [Address, AmountOut]),
           #{Address => AmountOut};
         {value, Item} ->
           Address = aeconnector_schedule:address(Item),
@@ -216,19 +216,19 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
           Comment = aeconnector_schedule:comment(Item),
           AmountOut = 0,
           %% TODO To calculate output;
-          ct:log("~nScheduled commitment (address: ~p, amount: ~p, comment: ~p)~n", [Address, AmountOut, Comment]),
+          lager:info("~nScheduled commitment (address: ~p, amount: ~p, comment: ~p)~n", [Address, AmountOut, Comment]),
           #{Address => AmountOut}
       end,
 
     Outputs2 = maps:merge(Outputs, Payment),
     {ok, RawTx, Data4} = createrawtransaction(Inputs, Outputs2, Data3),
-    ct:log("~ncreaterawtransaction: ~p~n",[RawTx]),
+    lager:info("~ncreaterawtransaction: ~p~n",[RawTx]),
 
     {ok, Hex, Data5} = signrawtransactionwithwallet(RawTx, Data4),
-    ct:log("~nsignrawtransactionwithwallet: ~p~n",[Hex]),
+    lager:info("~nsignrawtransactionwithwallet: ~p~n",[Hex]),
 
     {ok, Hex, Data6} = sendrawtransaction(Hex, Data5),
-    ct:log("~nsendrawtransaction: ~p~n",[Hex]),
+    lager:info("~nsendrawtransaction: ~p~n",[Hex]),
     %% TODO Announce http callback with commitment TxId
     %% The commitment hash announcement %% TODO to send via HTTP
     ok = gen_statem:reply(From, ok),
@@ -239,12 +239,12 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   end.
 
 disconnected(enter, _OldState, Data) ->
-  ct:log("~nBTC network is disconnected~n"),
+  lager:info("~nBTC network is disconnected~n"),
   %% TODO Announce http callback
   {keep_state, Data};
 
 disconnected(state_timeout, _, Data) ->
-  ct:log("~nBTC network connection attempt......~n"),
+  lager:info("~nBTC network connection attempt......~n"),
   try
     {ok, Hash, Data2} = getbestblockhash(Data),
     {next_state, connected, top(Data2, Hash)}
@@ -401,7 +401,7 @@ request(Path, Method, Params, Data) ->
       ],
     Opt = [],
     {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
-    lager:debug("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
+    lager:info("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
     {ok, jsx:decode(list_to_binary(Res), [return_maps]), DataUp}
   catch E:R:S ->
     lager:error("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
