@@ -195,14 +195,15 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   try
     Listunspent == [] andalso throw(<<"Listunspent is empty ">>),
     [Unspent|_] = Listunspent,
-    TxId = maps:get(<<"txid">>, Unspent), AmountIn = maps:get(<<"amount">>, Unspent),
+    lager:info("~nUnspent: ~p~n",[Unspent]),
+    TxId = maps:get(<<"txid">>, Unspent), Vout = maps:get(<<"vout">>, Unspent), AmountIn = maps:get(<<"amount">>, Unspent),
     %% NOTE:
     %% a) We use the first available input which matches the criteria (the list will be updated due to the sender activity);
     %% b) txid from the Input;
     %% c) vout is set to 0 accordingly to unspendable protocol for null data tx'ss;
     %% d) Payload is encoded into hex format;
     HexData = to_hex(Payload),
-    Inputs = [#{<<"txid">> => TxId, <<"vout">> => 0}],
+    Inputs = [#{<<"txid">> => TxId, <<"vout">> => Vout}],
     Outputs = #{<<"data">> => HexData},
     %% NOTE:
     %% The payment address is made from queued specification (otherwise the same input is used)
@@ -537,9 +538,10 @@ block(Obj) ->
   Height = maps:get(<<"height">>, Obj), true = is_integer(Height),
   PrevHash = maps:get(<<"previousblockhash">>, Obj), true = is_binary(PrevHash),
   %% TODO: To analyze the size field;
+  try
   FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) andalso is_txinwitness(Tx) end, maps:get(<<"tx">>, Obj)),
   Txs = [tx(Tx)||Tx <- FilteredTxs],
-  aeconnector_block:block(Height, Hash, PrevHash, Txs).
+  aeconnector_block:block(Height, Hash, PrevHash, Txs) catch _E:_R -> aeconnector_block:block(Height, Hash, PrevHash, []) end.
 
 -spec is_nulldata(map()) -> boolean().
 is_nulldata(Obj) ->

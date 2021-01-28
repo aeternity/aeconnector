@@ -160,7 +160,7 @@ connect(Config) ->
     <<"ssl">> => false,
     <<"timeout">> => 30000,
     <<"address">> => <<"tb1qczlzkzg24dzv08ggs0y080zax2hmejd8k2x00l">>,
-    <<"privatekey">> => <<"cW23Uvg5CJtzBjn8VCjRB5j4ctit2g5EY79DrWGFgJRuBcHyBbyT">>,
+    <<"privatekey">> => <<"cQ2xqWRwtkhbN2MfCPtrMDwdpEnjvGgqfDhXPjLcaf8EqN5v2oRQ">>,
     <<"wallet">> => <<"Hyperchains">>,
     <<"amount">> => 0.0001,
     <<"fee">> => 0.00001
