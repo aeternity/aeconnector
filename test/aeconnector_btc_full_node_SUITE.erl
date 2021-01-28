@@ -50,8 +50,8 @@ suite() ->
 init_per_suite(Config) ->
   ok = lager:start(),
   %% TODO: This data should be externally configured!
-  Payload = <<"Hyperchains trace">>,
-  GenesisHash = <<"0000000068d9d45579eeaf657ac6b446d8ec072a40b9cf7c0d566d57e20c5148">>,
+  Payload = <<"kh_Z6MucDvCV1HbgEN91QY6Hn6exY58v7oKp9uk2jatLVVusLdWL">>,
+  GenesisHash = <<"0000000046eac05f2f5bd64f29da6e8482c8928edd6edbf2ba4378f5f263a0a9">>,
   ReturnAddress = ?MODULE,
   Setup =
     [
@@ -101,8 +101,8 @@ end_per_testcase(_TestCase, _Config) ->
 %% TODO: To make nested, conditional groups
 groups() ->
   [
-    {user, [sequence], [connect, get_top_block, get_block_by_hash, disconnect]},
-    {delegate, [sequence], [connect, dry_send_tx, push_tx, pop_tx, send_tx, disconnect]}
+    {user, [sequence], [connect, get_top_block, get_block_by_hash, send_tx, disconnect]}
+%%    {delegate, [sequence], [connect, dry_send_tx, push_tx, pop_tx, send_tx, disconnect]}
 %%    {network, [sequence], [connect, synchronize, disconnect]}
   ].
 
@@ -122,8 +122,8 @@ groups() ->
 %%--------------------------------------------------------------------
 all() ->
   [
-    {group, user},
-    {group, delegate}
+    {group, user}
+%%    {group, delegate}
 %%    {group, network}
   ].
 
@@ -156,15 +156,14 @@ connect(Config) ->
     <<"user">> => <<"hyperchains">>,
     <<"password">> => <<"qwerty">>,
     <<"host">> => <<"127.0.0.1">>,
-    <<"private_key">> => <<"">>,
     <<"port">> => 8332,
     <<"ssl">> => false,
     <<"timeout">> => 30000,
-    <<"connect_timeout">> => 3000,
-    <<"autoredirect">> => true,
+    <<"address">> => <<"tb1qczlzkzg24dzv08ggs0y080zax2hmejd8k2x00l">>,
+    <<"privatekey">> => <<"cW23Uvg5CJtzBjn8VCjRB5j4ctit2g5EY79DrWGFgJRuBcHyBbyT">>,
     <<"wallet">> => <<"Hyperchains">>,
-    <<"min">> => 0.001,
-    <<"fee">> => 0.0009
+    <<"amount">> => 0.0001,
+    <<"fee">> => 0.00001
   },
   ReturnAddress = ?config(return_address, Config),
   Callback =
@@ -211,8 +210,8 @@ synchronize(Config) ->
 dry_send_tx() ->
   [].
 
-dry_send_tx(_Config) ->
-  Payload = <<"Hyperchains test trace">>,
+dry_send_tx(Config) ->
+  Payload = ?config(payload, Config),
   true = aeconnector:dry_send_tx(btc_conncetor(), <<"TEST">>, Payload),
   ok.
 
@@ -244,7 +243,7 @@ send_tx() ->
 
 send_tx(_Config) ->
   Payload = <<"Hyperchains trace">>,
-  [ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload) || _ <- lists:seq(0, 1)],
+  [ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload) || _ <- lists:seq(0, 0)],
   ok.
 
 disconnect() ->

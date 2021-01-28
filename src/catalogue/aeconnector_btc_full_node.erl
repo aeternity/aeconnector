@@ -26,6 +26,7 @@
 -export([connected/3, disconnected/3]).
 
 -type block() :: aeconnector_block:block().
+-type tx() :: aeconnector_tx:tx().
 
 -type item() :: aeconnector_schedule:item().
 
@@ -70,44 +71,45 @@ disconnect() ->
 %%%  gen_statem behaviour
 %%%===================================================================
 -record(data, {
-    %% RPC auth
-    auth::list(),
-    %% RPC url
-    url::list(),
+    auth :: list(),
+    url :: list(),
     %% RPC serial
-    serial::non_neg_integer(),
+    serial :: non_neg_integer(),
     %% RPC seed
-    seed::binary(),
+    seed :: binary(),
     %% New mined block announcement
-    callback::function(),
+    callback :: function(),
     %% The current top block hash
-    top::binary(),
-    %% URL for connector's announcements
-    web_hook::list(),
+    top :: binary(),
+    %% URL to POST the state transition announcements
+    webhook :: list(),
     %% Request timeout
-    timeout::integer(),
-    %% Established connection timeout
-    connect_timeout::integer(),
-    %% Allowed redirect
-    autoredirect::boolean(),
-    %% Selected wallet
-    wallet::binary(),
-    %% Queued commitments list
-    queue::term(),
-    %% Minimum balance to operate (0.01 BTC by default)
-    min::float(),
-    %% Direct fee definition
-    fee::float(),
+    timeout :: integer(),
+    %% The selected wallet
+    wallet :: binary(),
+    %% The Bitcoin address of a sender
+    address :: binary(),
+    %% The private key to sign a transaction
+    privatekey :: binary(),
+    %% Amount to send (0.01 BTC by default)
+    amount :: float(),
+    %% The transaction fee
+    fee :: float(),
     %% Estimated fee mode
-    estimate:: undefined | unset | economical | conservative
+    estimate :: undefined | unset | economical | conservative,
+    %% FIFO queue of scheduled payments
+    queue :: term()
   }).
 
 -type data() :: #data{}.
 
 init(Data) ->
+  %% The sensitive flag is used by specialized processes (sign keys, password holders, etc.)
+  process_flag(sensitive, true),
   try
     {ok, Info, Data2} = getblockchaininfo(Data),
-    lager:info("~nBTC network info: ~p~n", [Info]), %% ct:log
+    Template = lists:flatten(io_lib:format("~nBTC network info: ~p~n", [jsx:encode(Info)])),
+    lager:info(Template),
     SyncTimeOut = {{timeout, sync}, 0, _EventContent = []},
     {ok, connected, Data2, [SyncTimeOut]}
   catch _E:_R ->
@@ -138,7 +140,7 @@ connected({timeout, sync}, _, Data) ->
       _ ->
         {ok, Res2, Data3} = getblock(Hash, _Verbosity = 2, Data),
         Callback = callback(Data3),
-        catch(Callback(?MODULE, block(Res2))),
+        catch(Callback(?MODULE, block(result(Res2)))),
         lager:info("~nBTC network is synched: ~p~n", [Top]),
         top(Data3, Hash)
     end,
@@ -157,8 +159,7 @@ connected({call, From}, {get_block_by_hash, Hash}, Data) ->
   {keep_state, Data2, []};
 
 connected({call, From}, {push_tx, Item}, Data) ->
-  Queue2 = queue:in(Item, queue(Data)),
-  Data2 = queue(Data, Queue2),
+  Data2 = in(Data, Item),
   ok = gen_statem:reply(From, ok),
   {keep_state, Data2, []};
 
@@ -176,25 +177,32 @@ connected({call, From}, {pop_tx}, Data) ->
 
 connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
   %% NOTE: A number of confirmations has increased to make sure that validator's wallet is ready;
-  {ok, Listunspent, Data2} = listunspent(1, 9999999, [], true, #{ <<"minimumAmount">> => min(Data) }, Data),
+  MinConf = 1, MaxConf = 9999999,
+  Address = address(Data),
+  Amount = amount(Data),
+  {ok, Listunspent, Data2} = listunspent(MinConf, MaxConf, [Address], true, #{ <<"minimumAmount">> => Amount }, Data),
+  ct:log("~nListunspent is: ~p~n",[Listunspent]),
   ok = gen_statem:reply(From, Listunspent /= []),
   {keep_state, Data2, []};
 
 connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
   %% Min confirmations is lower with idea to support "hot" balance update for validators;
-  {ok, Listunspent, Data2} = listunspent(1, 9999999, [], true, #{ <<"minimumAmount">> => min(Data) }, Data),
+  MinConf = 1, MaxConf = 9999999,
+  Address = address(Data),
+  Amount = amount(Data),
+  {ok, Listunspent, Data2} = listunspent(MinConf, MaxConf, [Address], true, #{ <<"minimumAmount">> => Amount }, Data),
   lager:info("~nListunspent: ~p~n",[Listunspent]),
   try
-    Listunspent == [] andalso throw(<<"Listunspent is empty">>),
-    [Input|_] = Listunspent,
-    TxId = maps:get(<<"txid">>, Input), Vout = maps:get(<<"vout">>, Input),
+    Listunspent == [] andalso throw(<<"Listunspent is empty ">>),
+    [Unspent|_] = Listunspent,
+    TxId = maps:get(<<"txid">>, Unspent), AmountIn = maps:get(<<"amount">>, Unspent),
     %% NOTE:
     %% a) We use the first available input which matches the criteria (the list will be updated due to the sender activity);
     %% b) txid from the Input;
     %% c) vout is set to 0 accordingly to unspendable protocol for null data tx'ss;
     %% d) Payload is encoded into hex format;
     HexData = to_hex(Payload),
-    Inputs = [#{<<"txid">> => TxId, <<"vout">> => Vout}],
+    Inputs = [#{<<"txid">> => TxId, <<"vout">> => 0}],
     Outputs = #{<<"data">> => HexData},
     %% NOTE:
     %% The payment address is made from queued specification (otherwise the same input is used)
@@ -202,27 +210,31 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
     Payment =
       case Out of
         empty ->
-          Address = maps:get(<<"address">>, Input), AmountIn = maps:get(<<"amount">>, Input),
-          AmountOut = float_to_binary(AmountIn - fee(Data3), [{decimals, 4}]),
-          lager:info("~nDefault commitment (address: ~p, amount: ~p)~n", [Address, AmountOut]),
-          #{Address => AmountOut};
+          Fee = fee(Data3), Amount1 = (Amount - Fee), Amount2 = AmountIn - Amount1,
+          Out1 = float_to_binary(Amount1, [{decimals, 4}]),
+          Out2 = float_to_binary(Amount2, [{decimals, 4}]),
+          Template = lists:flatten(io_lib:format("Cycled commitment: address: ~s, amount: ~f, fee: ~f, out1: ~s, out2: ~s",
+            [binary_to_list(Address), Amount, Fee, binary_to_list(Out1), binary_to_list(Out2)])),
+          webhook(Template),
+          lager:info(Template),
+          #{ Address => Out1, Address => Out2 };
         {value, Item} ->
-          Address = aeconnector_schedule:address(Item),
-          _Amount = aeconnector_schedule:amount(Item),
-          _Fee = aeconnector_schedule:fee(Item),
+          ScheduledAddress = aeconnector_schedule:address(Item),
+          ScheduledAmount = aeconnector_schedule:amount(Item),
+          ScheduledFee = aeconnector_schedule:fee(Item),
           Comment = aeconnector_schedule:comment(Item),
-          AmountOut = 0,
           %% TODO To calculate output;
-          lager:info("~nScheduled commitment (address: ~p, amount: ~p, comment: ~p)~n", [Address, AmountOut, Comment]),
-          #{Address => AmountOut}
+          Template = "~nRegular commitment (address: ~p, amount: ~p, comment: ~p)~n",
+          lager:info(Template, [ScheduledAddress, ScheduledAmount, ScheduledFee, Comment]),
+          #{ ScheduledAddress => 0 }
       end,
 
     Outputs2 = maps:merge(Outputs, Payment),
     {ok, RawTx, Data4} = createrawtransaction(Inputs, Outputs2, Data3),
     lager:info("~ncreaterawtransaction: ~p~n",[RawTx]),
 
-    {ok, Hex, Data5} = signrawtransactionwithwallet(RawTx, Data4),
-    lager:info("~nsignrawtransactionwithwallet: ~p~n",[Hex]),
+    {ok, Hex, Data5} = signrawtransactionwithkey(RawTx, Data4),
+    lager:info("~signrawtransactionwithkey: ~p~n",[Hex]),
 
     {ok, Hash, Data6} = sendrawtransaction(Hex, Data5),
     lager:info("~nsendrawtransaction: ~p~n",[Hash]),
@@ -231,6 +243,7 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
     ok = gen_statem:reply(From, ok),
     {keep_state, Data6, []}
   catch E:R ->
+    ct:log("~nE: ~p R: ~p~n",[E, R]),
     ok = gen_statem:reply(From, {error, {E, R}}),
     {keep_state, Data2, []}
   end.
@@ -254,17 +267,6 @@ disconnected(_, _, Data) ->
 %%%===================================================================
 %%%  Data access layer
 %%%===================================================================
--spec out(data()) -> {{value, item()}, data()} | {empty, data()}.
-out(Data) ->
-  Queue = queue(Data),
-  case queue:out(Queue) of
-    {Res = {value, _Item}, Queue2} ->
-      Data2 = queue(Data, Queue2),
-      {Res, Data2};
-    {Res = empty, _Queue2} ->
-      {Res, Data}
-  end.
-
 -spec data(map(), function()) -> data().
 data(Args, Callback) ->
   User = maps:get(<<"user">>, Args),
@@ -273,10 +275,10 @@ data(Args, Callback) ->
   Port = maps:get(<<"port">>, Args, 8332),
   SSL = maps:get(<<"ssl">>, Args, false),
   Timeout = maps:get(<<"timeout">>, Args, 30000),
-  ConTimeout = maps:get(<<"connect_timeout">>, Args, 3000),
-  AutoRedirect = maps:get(<<"autoredirect">>, Args, true),
   Wallet = maps:get(<<"wallet">>, Args),
-  Min = maps:get(<<"min">>, Args, 0.01),
+  Address = maps:get(<<"address">>, Args),
+  PrivateKey = maps:get(<<"privatekey">>, Args),
+  Amount = maps:get(<<"amount">>, Args, 0.01),
   Fee = maps:get(<<"fee">>, Args),
   URL = url(binary_to_list(Host), Port, SSL),
   Auth = auth(binary_to_list(User), binary_to_list(Password)),
@@ -289,37 +291,49 @@ data(Args, Callback) ->
     seed = Seed,
     callback = Callback,
     timeout = Timeout,
-    connect_timeout = ConTimeout,
-    autoredirect = AutoRedirect,
     wallet = Wallet,
-    queue = queue:new(),
-    min = Min,
-    fee = Fee
+    address = Address,
+    privatekey = PrivateKey,
+    amount = Amount,
+    fee = Fee,
+    queue = queue:new()
   }.
 
 -spec auth(data()) -> binary().
 auth(Data) ->
   Data#data.auth.
 
+-spec callback(data()) -> function().
+callback(Data) ->
+  Data#data.callback.
+
+-spec top(data()) -> binary().
+top(Data) ->
+  Data#data.top.
+
+-spec top(data(), binary()) -> data().
+top(Data, Top) ->
+  Data#data{top = Top}.
+
 -spec timeout(data()) -> integer().
 timeout(Data) ->
   Data#data.timeout.
-
--spec connect_timeout(data()) -> integer().
-connect_timeout(Data) ->
-  Data#data.connect_timeout.
-
--spec autoredirect(data()) -> boolean().
-autoredirect(Data) ->
-  Data#data.autoredirect.
 
 -spec wallet(data()) -> binary().
 wallet(Data) ->
   Data#data.wallet.
 
--spec min(data()) -> float().
-min(Data) ->
-  Data#data.min.
+-spec address(data()) -> binary().
+address(Data) ->
+  Data#data.address.
+
+-spec privatekey(data()) -> binary().
+privatekey(Data) ->
+  Data#data.privatekey.
+
+-spec amount(data()) -> float().
+amount(Data) ->
+  Data#data.amount.
 
 -spec fee(data()) -> float().
 fee(Data) ->
@@ -345,17 +359,21 @@ queue(Data) ->
 queue(Data, Queue) ->
   Data#data{ queue = Queue}.
 
--spec callback(data()) -> function().
-callback(Data) ->
-  Data#data.callback.
+-spec out(data()) -> {{value, item()}, data()} | {empty, data()}.
+out(Data) ->
+  Queue = queue(Data),
+  case queue:out(Queue) of
+    {Res = {value, _Item}, Queue2} ->
+      Data2 = queue(Data, Queue2),
+      {Res, Data2};
+    {Res = empty, _Queue2} ->
+      {Res, Data}
+  end.
 
--spec top(data()) -> binary().
-top(Data) ->
-  Data#data.top.
-
--spec top(data(), binary()) -> data().
-top(Data, Top) ->
-  Data#data{top = Top}.
+-spec in(data(), item()) -> data().
+in(Data, Item) ->
+  Queue2 = queue:in(Item, queue(Data)),
+  queue(Data, Queue2).
 
 %%-spec tx(data()) -> binary().
 %%tx(Data) ->
@@ -391,9 +409,9 @@ request(Path, Method, Params, Data) ->
       ],
     Req = {Url, Headers, "application/json", Body},
     HTTPOpt = [
-        {timeout, timeout(Data)},
-        {connect_timeout, connect_timeout(Data)},
-        {autoredirect, autoredirect(Data)}
+        {timeout, timeout(Data)}
+%%        {connect_timeout, connect_timeout(Data)},
+%%        {autoredirect, autoredirect(Data)}
       ],
     Opt = [],
     {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
@@ -403,6 +421,12 @@ request(Path, Method, Params, Data) ->
     lager:error("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
     {error, {E, R, S}, DataUp}
   end.
+
+webhook(Text) ->
+  Url = "https://api.telegram.org/bot1615195542:AAEVQKT6I0yC3PVpmztjlejYd5ZM4KndPKA/sendMessage?chat_id=195084888&text=" ++ escape_uri(Text),
+  ct:log("~nUrl is: ~p~n",[Url]),
+  Req = Req = {Url, []},
+  {ok, {{_, 200 = _Code, _}, _, _Res}} = httpc:request(get, Req, [], []).
 
 -spec auth(binary(), binary()) -> list().
 auth(User, Password) ->
@@ -450,7 +474,7 @@ getbestblockhash(Data) ->
 getblock(Hash, Verbosity, Data) ->
   try
     {ok, Res, Data2} = request(<<"/">>, <<"getblock">>, [Hash, Verbosity], Data),
-    Block = block(Res),
+    Block = block(result(Res)),
     {ok, Block, Data2}
   catch E:R ->
     {error, {E, R}}
@@ -479,11 +503,12 @@ createrawtransaction(Inputs, Outputs, Data) ->
     {error, {E, R}}
   end.
 
--spec signrawtransactionwithwallet(binary(), data()) -> {ok, binary(), data()} | {error, term()}.
-signrawtransactionwithwallet(RawTx, Data) ->
+-spec signrawtransactionwithkey(binary(), data()) -> {ok, binary(), data()} | {error, term()}.
+signrawtransactionwithkey(RawTx, Data) ->
   try
-    Wallet = wallet(Data),
-    {ok, Res, Data2} = request(<<"/wallet/", Wallet/binary>>, <<"signrawtransactionwithwallet">>, [RawTx], Data),
+    PrivKey = privatekey(Data),
+    {ok, Res, Data2} = request(<<"/">>, <<"signrawtransactionwithkey">>, [RawTx, [PrivKey]], Data),
+    ct:log("~nsignrawtransactionwithkey res: ~p~n",[Res]),
     SignedTx = result(Res),
     Complete = maps:get(<<"complete">>, SignedTx), true = Complete,
     Hex = maps:get(<<"hex">>, SignedTx),
@@ -507,22 +532,82 @@ result(Response) ->
   maps:get(<<"result">>, Response).
 
 -spec block(map()) -> block().
-block(Response) ->
-  Result = result(Response),
-  Hash = maps:get(<<"hash">>, Result), true = is_binary(Hash),
-  Height = maps:get(<<"height">>, Result), true = is_integer(Height),
-  PrevHash = maps:get(<<"previousblockhash">>, Result), true = is_binary(PrevHash),
+block(Obj) ->
+  Hash = maps:get(<<"hash">>, Obj), true = is_binary(Hash),
+  Height = maps:get(<<"height">>, Obj), true = is_integer(Height),
+  PrevHash = maps:get(<<"previousblockhash">>, Obj), true = is_binary(PrevHash),
   %% TODO: To analyze the size field;
-  Txs = [
-    begin
-      Vin = maps:get(<<"vin">>, Tx),
-      Vout = maps:get(<<"vout">>, Tx),
-      %% TODO: To extract Tx data;
-      aeconnector_tx:test_tx(Vin, Vout) end|| Tx <- maps:get(<<"tx">>, Result)
-  ],
+  FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) andalso is_txinwitness(Tx) end, maps:get(<<"tx">>, Obj)),
+  Txs = [tx(Tx)||Tx <- FilteredTxs],
   aeconnector_block:block(Height, Hash, PrevHash, Txs).
+
+-spec is_nulldata(map()) -> boolean().
+is_nulldata(Obj) ->
+  Outputs = maps:get(<<"vout">>, Obj),
+  Res = [Output || Output = #{ <<"scriptPubKey">> := #{ <<"type">> := T} } <- Outputs, T == <<"nulldata">>],
+  Res /= [].
+
+-spec is_txinwitness(map()) -> boolean().
+is_txinwitness(Obj) ->
+  Inputs = maps:get(<<"vin">>, Obj),
+  Res = [Input || Input = #{ <<"txinwitness">> := L} <- Inputs, is_list(L)],
+  Res /= [].
+
+-spec account(map()) -> binary().
+account(Obj) ->
+  [Input] = maps:get(<<"vin">>, Obj), TxInWitness = maps:get(<<"txinwitness">>, Input),
+  [_, Account] = TxInWitness,
+  Account.
+
+-spec payload(map()) -> binary().
+payload(Obj) ->
+  Outputs = maps:get(<<"vout">>, Obj),
+  [Res] = [Hex || #{ <<"scriptPubKey">> := #{ <<"hex">> := Hex, <<"type">> := T} } <- Outputs, T == <<"nulldata">>],
+  Res.
+
+-spec tx(map()) -> tx().
+tx(Obj) ->
+  PublicKey = account(Obj), Payload = payload(Obj),
+  aeconnector_tx:test_tx(PublicKey, from_hex(Payload)).
 
 -spec to_hex(binary()) -> binary().
 to_hex(Payload) ->
-  ToHex = fun(C) when C < 10 -> $0 + C; (C) -> $a + C - 10 end,
-  _HexData = << <<(ToHex(H)),(ToHex(L))>> || <<H:4,L:4>> <= Payload >>.
+  ToHex = fun (X) -> integer_to_binary(X,16) end,
+
+  _HexData = << <<(ToHex(H))/binary,(ToHex(L))/binary>> || <<H:4,L:4>> <= Payload >>.
+
+-spec from_hex(binary()) -> binary().
+from_hex(HexData) ->
+  ct:log("~nData is: ~p~n",[HexData]),
+  ToInt = fun (X) -> integer_to_binary(X) end,
+
+  _Payload = << <<(ToInt(H))/binary,(ToInt(L))/binary>> || <<H:4,L:4>> <= HexData >>.
+
+escape_uri(S) when is_list(S) ->
+  escape_uri(unicode:characters_to_binary(S));
+escape_uri(<<C:8, Cs/binary>>) when C >= $a, C =< $z ->
+  [C] ++ escape_uri(Cs);
+escape_uri(<<C:8, Cs/binary>>) when C >= $A, C =< $Z ->
+  [C] ++ escape_uri(Cs);
+escape_uri(<<C:8, Cs/binary>>) when C >= $0, C =< $9 ->
+  [C] ++ escape_uri(Cs);
+escape_uri(<<C:8, Cs/binary>>) when C == $. ->
+  [C] ++ escape_uri(Cs);
+escape_uri(<<C:8, Cs/binary>>) when C == $- ->
+  [C] ++ escape_uri(Cs);
+escape_uri(<<C:8, Cs/binary>>) when C == $_ ->
+  [C] ++ escape_uri(Cs);
+escape_uri(<<C:8, Cs/binary>>) ->
+  escape_byte(C) ++ escape_uri(Cs);
+escape_uri(<<>>) ->
+  "".
+
+escape_byte(C) ->
+  "%" ++ hex_octet(C).
+
+hex_octet(N) when N =< 9 ->
+  [$0 + N];
+hex_octet(N) when N > 15 ->
+  hex_octet(N bsr 4) ++ hex_octet(N band 15);
+hex_octet(N) ->
+  [N - 10 + $a].
