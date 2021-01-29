@@ -538,10 +538,9 @@ block(Obj) ->
   Height = maps:get(<<"height">>, Obj), true = is_integer(Height),
   PrevHash = maps:get(<<"previousblockhash">>, Obj), true = is_binary(PrevHash),
   %% TODO: To analyze the size field;
-  try
-  FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) andalso is_txinwitness(Tx) end, maps:get(<<"tx">>, Obj)),
+  FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) andalso is_template(Tx) end, maps:get(<<"tx">>, Obj)),
   Txs = [tx(Tx)||Tx <- FilteredTxs],
-  aeconnector_block:block(Height, Hash, PrevHash, Txs) catch _E:_R -> aeconnector_block:block(Height, Hash, PrevHash, []) end.
+  aeconnector_block:block(Height, Hash, PrevHash, Txs).
 
 -spec is_nulldata(map()) -> boolean().
 is_nulldata(Obj) ->
@@ -549,17 +548,15 @@ is_nulldata(Obj) ->
   Res = [Output || Output = #{ <<"scriptPubKey">> := #{ <<"type">> := T} } <- Outputs, T == <<"nulldata">>],
   Res /= [].
 
--spec is_txinwitness(map()) -> boolean().
-is_txinwitness(Obj) ->
-  Inputs = maps:get(<<"vin">>, Obj),
-  Res = [Input || Input = #{ <<"txinwitness">> := L} <- Inputs, is_list(L)],
-  Res /= [].
+-spec is_template(map()) -> boolean().
+is_template(#{ <<"vin">> := [#{ <<"txinwitness">> := [_, _Pub]}] }) ->
+  true;
+is_template(_) ->
+  false.
 
 -spec account(map()) -> binary().
-account(Obj) ->
-  [Input] = maps:get(<<"vin">>, Obj), TxInWitness = maps:get(<<"txinwitness">>, Input),
-  [_, Account] = TxInWitness,
-  Account.
+account(#{ <<"vin">> := [#{ <<"txinwitness">> := [_, Res]}] }) ->
+  Res.
 
 -spec payload(map()) -> binary().
 payload(Obj) ->
@@ -575,15 +572,13 @@ tx(Obj) ->
 -spec to_hex(binary()) -> binary().
 to_hex(Payload) ->
   ToHex = fun (X) -> integer_to_binary(X,16) end,
-
-  _HexData = << <<(ToHex(H))/binary,(ToHex(L))/binary>> || <<H:4,L:4>> <= Payload >>.
+  _HexData = << <<(ToHex(X))/binary>> || <<X:4>> <= Payload >>.
 
 -spec from_hex(binary()) -> binary().
 from_hex(HexData) ->
-  ct:log("~nData is: ~p~n",[HexData]),
-  ToInt = fun (X) -> integer_to_binary(X) end,
-
-  _Payload = << <<(ToInt(H))/binary,(ToInt(L))/binary>> || <<H:4,L:4>> <= HexData >>.
+  <<"6a", HexPayload/binary>> = HexData,
+  ToInt = fun (H, L) -> binary_to_integer(<<H, L>>,16) end,
+  _Payload = << <<(ToInt(H, L))>> || <<H:8, L:8>> <= HexPayload >>.
 
 escape_uri(S) when is_list(S) ->
   escape_uri(unicode:characters_to_binary(S));

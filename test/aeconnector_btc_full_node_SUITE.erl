@@ -2,21 +2,21 @@
 %%%-------------------------------------------------------------------
 %%% @copyright (C) 2020, Aeternity Anstalt
 %%% @doc
-%%% This module executes BTC integration acceptance processes across "user" and "delegate" roles.
-%%% The process requires opened connection to the BTC network and divided into the next steps:
+%%% This module executes BTC integration acceptance suite for the "user" and "delegate" roles.
+%%% The process requires opened connection to the BTC network and described by the next steps:
 %%% For the "user" role (default)
 %%% 1. Open connection to the network (connect);
-%%% 2. Fetch the hash of the current best block (get_top_block);
-%%% 3. Fetch the block data for predefined pin-pointed hash (get_block_by_hash);
+%%% 2. Get the hash of the current best block (get_top_block);
+%%% 3. Fetch the chain from the current best block to the landed entry (genesis);
 %%% 4. Synchronize the new mined block (a time depends on BTC network: ~8 min) (sync)
 %%% 5. Close connection (disconnect);
 %%% For the "delegate" role
 %%% 1. Open connection to the network (connect);
 %%% 2. Check available inputs, balance (dry_send_tx);
-%%% 3. Send commitment transaction with predefined payload (send_tx);
-%%% 4. Put scheduled commitments into queue;
-%%% 5. Send scheduled commitments
-%%% 5. Close connection (disconnect);
+%%% 3. Put scheduled commitments into queue;
+%%% 4. Pop scheduled commitment from a queue;
+%%% 5. Send commitment transactions with predefined payload (send_tx);
+%%% 6. Close connection (disconnect);
 %%% @end
 -module(aeconnector_btc_full_node_SUITE).
 
@@ -29,14 +29,14 @@
 
 -export([all/0]).
 
--export([connect/0, connect/1]).
--export([dry_send_tx/0, dry_send_tx/1, send_tx/0, send_tx/1]).
--export([get_top_block/0, get_top_block/1]).
--export([get_block_by_hash/0, get_block_by_hash/1]).
--export([synchronize/0, synchronize/1]).
--export([push_tx/0, push_tx/1]).
--export([pop_tx/0, pop_tx/1]).
--export([disconnect/0, disconnect/1]).
+-export([connect/1]).
+-export([dry_send_tx/1, send_tx/1]).
+-export([get_top_block/1]).
+-export([get_block_by_hash/1]).
+-export([fetch/1]).
+-export([synchronize/1]).
+-export([push_tx/1, pop_tx/1]).
+-export([disconnect/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -51,14 +51,13 @@ init_per_suite(Config) ->
   ok = lager:start(),
   %% TODO: This data should be externally configured!
   Payload = <<"kh_Z6MucDvCV1HbgEN91QY6Hn6exY58v7oKp9uk2jatLVVusLdWL">>,
-  GenesisHash = <<"0000000046eac05f2f5bd64f29da6e8482c8928edd6edbf2ba4378f5f263a0a9">>,
+  Genesis = <<"0000000046eac05f2f5bd64f29da6e8482c8928edd6edbf2ba4378f5f263a0a9">>,
   ReturnAddress = ?MODULE,
   Setup =
     [
       {payload, Payload},
-      {test_hash, GenesisHash},
-      {return_address, ReturnAddress},
-      {timeout, 60*60*1000}
+      {genesis, Genesis},
+      {return_address, ReturnAddress}
     ],
   lists:append(Setup, Config).
 
@@ -101,9 +100,8 @@ end_per_testcase(_TestCase, _Config) ->
 %% TODO: To make nested, conditional groups
 groups() ->
   [
-    {user, [sequence], [connect, get_top_block, get_block_by_hash, send_tx, disconnect]}
+    {user, [sequence], [connect, get_top_block, get_block_by_hash, fetch, disconnect]}
 %%    {delegate, [sequence], [connect, dry_send_tx, push_tx, pop_tx, send_tx, disconnect]}
-%%    {network, [sequence], [connect, synchronize, disconnect]}
   ].
 
 %%--------------------------------------------------------------------
@@ -122,17 +120,12 @@ groups() ->
 %%--------------------------------------------------------------------
 all() ->
   [
-    {group, user}
-%%    {group, delegate}
-%%    {group, network}
+    {group, user}%%, {group, delegate}
   ].
 
 %%--------------------------------------------------------------------
 %% TEST CASES
 %%--------------------------------------------------------------------
-
-connect() ->
-  [].
 
 %%--------------------------------------------------------------------
 %% Function: TestCase(Config0) ->
@@ -168,55 +161,48 @@ connect(Config) ->
   ReturnAddress = ?config(return_address, Config),
   Callback =
     fun (_Con, Block) ->
-      ct:log(info, "~nMined block: ~p~n", [Block]),
+      ct:log(info, "~nThe new mined block is: ~p~n", [Block]),
       ReturnAddress ! Block
     end,
   {ok, Pid} = aeconnector:connect(btc_conncetor(), Args, Callback),
   {comment, Pid}.
-
-get_top_block() ->
-  [].
 
 get_top_block(_Config) ->
   {ok, Hash} = aeconnector:get_top_block(btc_conncetor()),
   true = is_binary(Hash),
   {comment, Hash}.
 
-get_block_by_hash() ->
-  [].
-
 get_block_by_hash(Config) ->
-  Hash = ?config(test_hash, Config),
+  Hash = ?config(genesis, Config),
   {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
   true = aeconnector_block:is_block(Block),
   {comment, Block}.
 
-synchronize() ->
-  [].
+fetch(Config) ->
+  {ok, Top} = aeconnector:get_top_block(btc_conncetor()),
+  Genesis = ?config(genesis, Config),
+
+  fun Fetch(Hash) ->
+    {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
+    ct:log("~nThe fecthed block: ~p~n",[Block]),
+    PrevHash = aeconnector_block:prev_hash(Block),
+    (Hash == Genesis) orelse Fetch(PrevHash)
+  end(Top),
+  {comment, {Top, Genesis}}.
 
 synchronize(Config) ->
   ReturnAddress = ?config(return_address, Config),
-  Timeout = ?config(timeout, Config),
   erlang:register(ReturnAddress, self()),
   receive
     Block ->
       true = aeconnector_block:is_block(Block),
       {comment, Block}
-  after
-    Timeout ->
-      ct:fail("~nSynchronization timeout: ~p~n", [Timeout])
   end.
-
-dry_send_tx() ->
-  [].
 
 dry_send_tx(Config) ->
   Payload = ?config(payload, Config),
   true = aeconnector:dry_send_tx(btc_conncetor(), <<"TEST">>, Payload),
   ok.
-
-push_tx() ->
-  [].
 
 push_tx(_Config) ->
   Radek = <<"tb1qczlzkzg24dzv08ggs0y080zax2hmejd8k2x00l">>,
@@ -230,24 +216,15 @@ push_tx(_Config) ->
   [ok = aeconnector:push_tx(btc_conncetor(), Item) || Item <- Scheduled],
   ok.
 
-pop_tx() ->
-  [].
-
 pop_tx(_Config) ->
   {ok, Item} = aeconnector:pop_tx(btc_conncetor()),
   true = aeconnector_schedule:is_item(Item),
   ok.
 
-send_tx() ->
-  [].
-
 send_tx(_Config) ->
   Payload = <<"Hyperchains trace">>,
   [ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload) || _ <- lists:seq(0, 0)],
   ok.
-
-disconnect() ->
-  [].
 
 disconnect(_Config) ->
   ok = aeconnector:disconnect(btc_conncetor()).
