@@ -25,6 +25,7 @@
 -callback push_tx(item()) -> ok.
 -callback pop_tx() -> {ok, item()} | {error, term()}.
 
+%% Report should be implemented as a part of behaviour
 -callback disconnect() -> ok.
 
 -optional_callbacks([push_tx/1, pop_tx/0]).

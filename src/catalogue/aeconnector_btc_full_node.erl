@@ -35,7 +35,7 @@
 %%%===================================================================
 -spec connect(map(), function()) -> {ok, pid()} | {error, term()}.
 connect(Args, Callback) when is_map(Args), is_function(Callback) ->
-  Data = data(Args, Callback),
+  Data = callback(args(data(), Args), Callback),
   gen_statem:start({local, ?MODULE}, ?MODULE, Data, []).
 
 -spec dry_send_tx(binary(), binary()) -> boolean().
@@ -71,32 +71,34 @@ disconnect() ->
 %%%  gen_statem behaviour
 %%%===================================================================
 -record(data, {
+    %% Bitcoin node RPC credentials
     auth :: list(),
+    %% Bitcoin node RPC connection address
     url :: list(),
     %% RPC serial
     serial :: non_neg_integer(),
     %% RPC seed
     seed :: binary(),
-    %% New mined block announcement
+    %% Announcement of the new best block
     callback :: function(),
-    %% The current top block hash
+    %% The current best block hash
     top :: binary(),
-    %% URL to POST the state transition announcements
+    %% URL to POST rendered template file
     webhook :: list(),
+    %% Path to the template file
+    template :: list(),
     %% Request timeout
-    timeout :: integer(),
-    %% The selected wallet
+    timeout = 5000 :: integer(),
+    %% The current selected wallet
     wallet :: binary(),
     %% The Bitcoin address of a sender
     address :: binary(),
-    %% The private key to sign a transaction
+    %% The private key of a sender
     privatekey :: binary(),
     %% Amount to send (0.01 BTC by default)
     amount :: float(),
     %% The transaction fee
-    fee :: float(),
-    %% Estimated fee mode
-    estimate :: undefined | unset | economical | conservative,
+    fee = conservative :: float() | unset | economical | conservative,
     %% FIFO queue of scheduled payments
     queue :: term()
   }).
@@ -268,45 +270,70 @@ disconnected(_, _, Data) ->
 %%%===================================================================
 %%%  Data access layer
 %%%===================================================================
--spec data(map(), function()) -> data().
-data(Args, Callback) ->
+-spec data() -> data().
+data() ->
+  #data{ queue = queue:new() }.
+
+-spec args(data(), map()) -> data().
+args(Data, Args) ->
   User = maps:get(<<"user">>, Args),
   Password = maps:get(<<"password">>, Args),
   Host = maps:get(<<"host">>, Args, <<"127.0.0.1">>),
   Port = maps:get(<<"port">>, Args, 8332),
   SSL = maps:get(<<"ssl">>, Args, false),
-  Timeout = maps:get(<<"timeout">>, Args, 30000),
   Wallet = maps:get(<<"wallet">>, Args),
   Address = maps:get(<<"address">>, Args),
   PrivateKey = maps:get(<<"privatekey">>, Args),
-  Amount = maps:get(<<"amount">>, Args, 0.01),
-  Fee = maps:get(<<"fee">>, Args),
+  Amount = maps:get(<<"amount">>, Args),
+
   URL = url(binary_to_list(Host), Port, SSL),
   Auth = auth(binary_to_list(User), binary_to_list(Password)),
   Serial = 0,
   Seed = erlang:md5(term_to_binary({Serial, node(), make_ref()})),
-  #data{
-    auth = Auth,
-    url = URL,
-    serial = Serial,
-    seed = Seed,
-    callback = Callback,
-    timeout = Timeout,
-    wallet = Wallet,
-    address = Address,
-    privatekey = PrivateKey,
-    amount = Amount,
-    fee = Fee,
-    queue = queue:new()
-  }.
+
+  Data2 =
+    Data#data{
+      auth = Auth,
+      url = URL,
+      serial = Serial,
+      seed = Seed,
+      wallet = Wallet,
+      address = Address,
+      privatekey = PrivateKey,
+      amount = Amount
+    },
+  I = maps:iterator(Args), Next = maps:next(I),
+  next(Data2, Next).
+
+next(Data, none) ->
+  Data;
+
+next(Data, {<<"webhook">>, V, I}) ->
+  WebHook = binary_to_list(V),
+  next(Data#data{ webhook = WebHook }, maps:next(I));
+
+next(Data, {<<"template">>, V, I}) ->
+  Template = binary_to_list(V),
+  next(Data#data{ template = Template }, maps:next(I));
+
+next(Data, {<<"timeout">>, V, I}) ->
+  next(Data#data{ timeout = V }, maps:next(I));
+
+next(Data, {<<"fee">>, V, I}) when is_float(V) ->
+  next(Data#data{ fee = V }, maps:next(I));
+
+next(Data, {<<"fee">>, V, I}) when V == <<"unset">>;
+                                   V == <<"economical">>;
+                                   V == <<"conservative">> ->
+  Fee = binary_to_atom(V, latin1),
+  next(Data#data{ fee = Fee }, maps:next(I));
+
+next(Data, {_, _, I}) ->
+  next(Data, maps:next(I)).
 
 -spec auth(data()) -> binary().
 auth(Data) ->
   Data#data.auth.
-
--spec callback(data()) -> function().
-callback(Data) ->
-  Data#data.callback.
 
 -spec top(data()) -> binary().
 top(Data) ->
@@ -315,6 +342,20 @@ top(Data) ->
 -spec top(data(), binary()) -> data().
 top(Data, Top) ->
   Data#data{top = Top}.
+
+-spec webhook(data()) -> list().
+webhook(Data) ->
+  Data#data.webhook.
+
+%%webhook(Text) ->
+%%  Url = "https://api.telegram.org/bot1615195542:AAEVQKT6I0yC3PVpmztjlejYd5ZM4KndPKA/sendMessage?chat_id=195084888&text=" ++ escape_uri(Text),
+%%  ct:log("~nUrl is: ~p~n",[Url]),
+%%  Req = Req = {Url, []},
+%%  {ok, {{_, 200 = _Code, _}, _, _Res}} = httpc:request(get, Req, [], []).
+
+-spec template(data()) -> list().
+template(Data) ->
+  Data#data.template.
 
 -spec timeout(data()) -> integer().
 timeout(Data) ->
@@ -351,6 +392,14 @@ seed(Data) ->
 -spec seed(data(), binary()) -> data().
 seed(Data, Seed) ->
   Data#data{ seed = Seed }.
+
+-spec callback(data()) -> function().
+callback(Data) ->
+  Data#data.callback.
+
+-spec callback(data(), function()) -> data().
+callback(Data, Callback) when is_function(Callback) ->
+  Data#data{ callback = Callback }.
 
 -spec queue(data()) -> term().
 queue(Data) ->
@@ -409,11 +458,7 @@ request(Path, Method, Params, Data) ->
         {"Authorization", lists:concat(["Basic ", Auth])}
       ],
     Req = {Url, Headers, "application/json", Body},
-    HTTPOpt = [
-        {timeout, timeout(Data)}
-%%        {connect_timeout, connect_timeout(Data)},
-%%        {autoredirect, autoredirect(Data)}
-      ],
+    HTTPOpt = [{timeout, timeout(Data)}],
     Opt = [],
     {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
     lager:debug("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
@@ -422,12 +467,6 @@ request(Path, Method, Params, Data) ->
     lager:error("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
     {error, {E, R, S}, DataUp}
   end.
-
-webhook(Text) ->
-  Url = "https://api.telegram.org/bot1615195542:AAEVQKT6I0yC3PVpmztjlejYd5ZM4KndPKA/sendMessage?chat_id=195084888&text=" ++ escape_uri(Text),
-  ct:log("~nUrl is: ~p~n",[Url]),
-  Req = Req = {Url, []},
-  {ok, {{_, 200 = _Code, _}, _, _Res}} = httpc:request(get, Req, [], []).
 
 -spec auth(binary(), binary()) -> list().
 auth(User, Password) ->
@@ -538,7 +577,7 @@ block(Obj) ->
   Height = maps:get(<<"height">>, Obj), true = is_integer(Height),
   PrevHash = maps:get(<<"previousblockhash">>, Obj), true = is_binary(PrevHash),
   %% TODO: To analyze the size field;
-  FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) andalso is_template(Tx) end, maps:get(<<"tx">>, Obj)),
+  FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) end, maps:get(<<"tx">>, Obj)),
   Txs = [tx(Tx)||Tx <- FilteredTxs],
   aeconnector_block:block(Height, Hash, PrevHash, Txs).
 
@@ -548,15 +587,15 @@ is_nulldata(Obj) ->
   Res = [Output || Output = #{ <<"scriptPubKey">> := #{ <<"type">> := T} } <- Outputs, T == <<"nulldata">>],
   Res /= [].
 
--spec is_template(map()) -> boolean().
-is_template(#{ <<"vin">> := [#{ <<"txinwitness">> := [_, _Pub]}] }) ->
-  true;
-is_template(_) ->
-  false.
+%%-spec is_template(map()) -> boolean().
+%%is_template(#{ <<"vin">> := [#{ <<"txinwitness">> := [_, _Pub]}] }) ->
+%%  true;
+%%is_template(_) ->
+%%  false.
 
--spec account(map()) -> binary().
-account(#{ <<"vin">> := [#{ <<"txinwitness">> := [_, Res]}] }) ->
-  Res.
+%%-spec account(map()) -> binary().
+%%account(#{ <<"vin">> := [#{ <<"txinwitness">> := [_, Res]}] }) ->
+%%  Res.
 
 -spec payload(map()) -> binary().
 payload(Obj) ->
@@ -566,8 +605,9 @@ payload(Obj) ->
 
 -spec tx(map()) -> tx().
 tx(Obj) ->
-  PublicKey = account(Obj), Payload = payload(Obj),
-  aeconnector_tx:test_tx(PublicKey, from_hex(Payload)).
+%%  PublicKey = account(Obj),
+  Payload = payload(Obj),
+  aeconnector_tx:test_tx(<<"PublicKey">>, from_hex(Payload)).
 
 -spec to_hex(binary()) -> binary().
 to_hex(Payload) ->
@@ -580,31 +620,6 @@ from_hex(HexData) ->
   ToInt = fun (H, L) -> binary_to_integer(<<H, L>>,16) end,
   _Payload = << <<(ToInt(H, L))>> || <<H:8, L:8>> <= HexPayload >>.
 
-escape_uri(S) when is_list(S) ->
-  escape_uri(unicode:characters_to_binary(S));
-escape_uri(<<C:8, Cs/binary>>) when C >= $a, C =< $z ->
-  [C] ++ escape_uri(Cs);
-escape_uri(<<C:8, Cs/binary>>) when C >= $A, C =< $Z ->
-  [C] ++ escape_uri(Cs);
-escape_uri(<<C:8, Cs/binary>>) when C >= $0, C =< $9 ->
-  [C] ++ escape_uri(Cs);
-escape_uri(<<C:8, Cs/binary>>) when C == $. ->
-  [C] ++ escape_uri(Cs);
-escape_uri(<<C:8, Cs/binary>>) when C == $- ->
-  [C] ++ escape_uri(Cs);
-escape_uri(<<C:8, Cs/binary>>) when C == $_ ->
-  [C] ++ escape_uri(Cs);
-escape_uri(<<C:8, Cs/binary>>) ->
-  escape_byte(C) ++ escape_uri(Cs);
-escape_uri(<<>>) ->
-  "".
-
-escape_byte(C) ->
-  "%" ++ hex_octet(C).
-
-hex_octet(N) when N =< 9 ->
-  [$0 + N];
-hex_octet(N) when N > 15 ->
-  hex_octet(N bsr 4) ++ hex_octet(N band 15);
-hex_octet(N) ->
-  [N - 10 + $a].
+%%%===================================================================
+%%%  Data access layer
+%%%===================================================================
