@@ -152,6 +152,7 @@ connect(Config) ->
     <<"port">> => 8332,
     <<"ssl">> => false,
     <<"timeout">> => 30000,
+    <<"webhook">> => <<"https://api.telegram.org/bot1615195542:AAEVQKT6I0yC3PVpmztjlejYd5ZM4KndPKA/sendMessage?chat_id=195084888&parse_mode=html">>,
     <<"address">> => <<"tb1qczlzkzg24dzv08ggs0y080zax2hmejd8k2x00l">>,
     <<"privatekey">> => <<"cQ2xqWRwtkhbN2MfCPtrMDwdpEnjvGgqfDhXPjLcaf8EqN5v2oRQ">>,
     <<"wallet">> => <<"Hyperchains">>,
@@ -178,17 +179,19 @@ get_block_by_hash(Config) ->
   true = aeconnector_block:is_block(Block),
   {comment, Block}.
 
-fetch(Config) ->
-  {ok, Top} = aeconnector:get_top_block(btc_conncetor()),
-  Genesis = ?config(genesis, Config),
+fetch(Config) -> ok.
 
-  fun Fetch(Hash) ->
-    {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
-    ct:log("~nThe fecthed block: ~p~n",[Block]),
-    PrevHash = aeconnector_block:prev_hash(Block),
-    (Hash == Genesis) orelse Fetch(PrevHash)
-  end(Top),
-  {comment, {Top, Genesis}}.
+%%fetch(Config) ->
+%%  {ok, Top} = aeconnector:get_top_block(btc_conncetor()),
+%%  Genesis = ?config(genesis, Config),
+%%
+%%  fun Fetch(Hash) ->
+%%    {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
+%%    ct:log("~nThe fecthed block: ~p~n",[Block]),
+%%    PrevHash = aeconnector_block:prev_hash(Block),
+%%    (Hash == Genesis) orelse Fetch(PrevHash)
+%%  end(Top),
+%%  {comment, {Top, Genesis}}.
 
 synchronize(Config) ->
   ReturnAddress = ?config(return_address, Config),

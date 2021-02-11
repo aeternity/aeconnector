@@ -79,11 +79,12 @@ disconnect() ->
     serial :: non_neg_integer(),
     %% RPC seed
     seed :: binary(),
-    %% Announcement of the new best block
+    %% Announcement of the best block
     callback :: function(),
+    height :: non_neg_integer(),
     %% The current best block hash
-    top :: binary(),
-    %% URL to POST rendered template file
+    hash :: binary(),
+    %% URL to POST rendered template
     webhook :: list(),
     %% Path to the template file
     template :: list(),
@@ -91,12 +92,14 @@ disconnect() ->
     timeout = 5000 :: integer(),
     %% The current selected wallet
     wallet :: binary(),
+    %% The current available balance
+    balance = 0.0 :: float(),
     %% The Bitcoin address of a sender
     address :: binary(),
     %% The private key of a sender
     privatekey :: binary(),
-    %% Amount to send (0.01 BTC by default)
-    amount :: float(),
+    %% Amount to send
+    amount = 0.0 :: float(),
     %% The transaction fee
     fee = conservative :: float() | unset | economical | conservative,
     %% FIFO queue of scheduled payments
@@ -109,9 +112,11 @@ init(Data) ->
   %% The sensitive flag is used by specialized processes (sign keys, password holders, etc.)
   process_flag(sensitive, true),
   try
+    %% Template preparation
+    (webhook(Data) == undefined) orelse compile(Data),
+    %% Bitcoin network request (informational purposes only)
     {ok, Info, Data2} = getblockchaininfo(Data),
-    Template = lists:flatten(io_lib:format("~nBTC network info: ~p~n", [jsx:encode(Info)])),
-    lager:info(Template),
+    lager:info("~nBTC network info: ~p~n", [Info]),
     SyncTimeOut = {{timeout, sync}, 0, _EventContent = []},
     {ok, connected, Data2, [SyncTimeOut]}
   catch _E:_R ->
@@ -133,20 +138,22 @@ connected(enter, _OldState, Data) ->
   {keep_state, Data, []};
 
 connected({timeout, sync}, _, Data) ->
-  Top = top(Data),
+  Top = hash(Data),
   {ok, Hash, Data2} = getbestblockhash(Data),
-  Data4 =
+  Data5 =
     case Hash of
       Top ->
         Data2;
       _ ->
-        {ok, Res2, Data3} = getblock(Hash, _Verbosity = 2, Data),
+        {ok, Block, Data3} = getblock(Hash, _Verbosity = 2, Data),
         Callback = callback(Data3),
-        catch(Callback(?MODULE, block(result(Res2)))),
-        lager:info("~nBTC network is synched: ~p~n", [Top]),
-        top(Data3, Hash)
+        catch(Callback(?MODULE, Block)),
+        Data4 = top(Data3, Block),
+        lager:info("~nBTC network is synched on: ~p~n", [Hash]),
+        report(Data4, _Connected = true),
+        Data4
     end,
-  {keep_state, Data4, [{{timeout, sync}, 1000, _EventContent = []}]};
+  {keep_state, Data5, [{{timeout, sync}, 1000, _EventContent = []}]};
 
 connected({call, From}, {get_top_block}, Data) ->
   {ok, Hash, Data2} = getbestblockhash(Data),
@@ -214,11 +221,10 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
       case Out of
         empty ->
           Fee = fee(Data3), Amount1 = (Amount - Fee), Amount2 = AmountIn - Amount1,
-          Out1 = float_to_binary(Amount1, [{decimals, 4}]),
-          Out2 = float_to_binary(Amount2, [{decimals, 4}]),
+          Out1 = aeconnector:amount(Amount1),
+          Out2 = aeconnector:amount(Amount2),
           Template = lists:flatten(io_lib:format("Cycled commitment: address: ~s, amount: ~f, fee: ~f, out1: ~s, out2: ~s",
             [binary_to_list(Address), Amount, Fee, binary_to_list(Out1), binary_to_list(Out2)])),
-          webhook(Template),
           lager:info(Template),
           #{ Address => Out1, Address => Out2 };
         {value, Item} ->
@@ -244,7 +250,10 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
     %% TODO Announce http callback with commitment TxId
     %% The commitment hash announcement %% TODO to send via HTTP
     ok = gen_statem:reply(From, ok),
-    {keep_state, Data6, []}
+
+    %% TODO TO update balance at this line
+    Balance = 0,
+    {keep_state, balance(Data6, Balance), []}
   catch E:R ->
     ct:log("~nE: ~p R: ~p~n",[E, R]),
     ok = gen_statem:reply(From, {error, {E, R}}),
@@ -253,13 +262,15 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
 
 disconnected(enter, _OldState, Data) ->
   %% TODO Announce http callback
+  report(Data, _Connected = false),
   {keep_state, Data};
 
 disconnected(state_timeout, _, Data) ->
   lager:info("~nBTC network connection attempt......~n"),
   try
-    {ok, Hash, Data2} = getbestblockhash(Data),
-    {next_state, connected, top(Data2, Hash)}
+    Hash = hash(Data),
+    {ok, Block, Data2} = getblock(Hash, _Verbosity = 2, Data),
+    {next_state, connected, top(Data2, Block)}
   catch _:_ ->
     {keep_state, Data, [{state_timeout, 1000, connect}]}
   end;
@@ -291,6 +302,8 @@ args(Data, Args) ->
   Serial = 0,
   Seed = erlang:md5(term_to_binary({Serial, node(), make_ref()})),
 
+  Priv = aeconnector:priv_dir(),
+  Template = filename:join(Priv, "btc_full_node_telegram.dtl"),
   Data2 =
     Data#data{
       auth = Auth,
@@ -300,11 +313,13 @@ args(Data, Args) ->
       wallet = Wallet,
       address = Address,
       privatekey = PrivateKey,
-      amount = Amount
+      amount = Amount,
+      template = Template
     },
   I = maps:iterator(Args), Next = maps:next(I),
   next(Data2, Next).
 
+%% Non obligatory options setup
 next(Data, none) ->
   Data;
 
@@ -335,23 +350,22 @@ next(Data, {_, _, I}) ->
 auth(Data) ->
   Data#data.auth.
 
--spec top(data()) -> binary().
-top(Data) ->
-  Data#data.top.
+-spec hash(data()) -> binary().
+hash(Data) ->
+  Data#data.hash.
 
--spec top(data(), binary()) -> data().
-top(Data, Top) ->
-  Data#data{top = Top}.
+-spec height(data()) -> binary().
+height(Data) ->
+  Data#data.height.
+
+-spec top(data(), block()) -> data().
+top(Data, Block) ->
+  Hash = aeconnector_block:hash(Block), Height = aeconnector_block:height(Block),
+  Data#data{ hash = Hash, height = Height }.
 
 -spec webhook(data()) -> list().
 webhook(Data) ->
   Data#data.webhook.
-
-%%webhook(Text) ->
-%%  Url = "https://api.telegram.org/bot1615195542:AAEVQKT6I0yC3PVpmztjlejYd5ZM4KndPKA/sendMessage?chat_id=195084888&text=" ++ escape_uri(Text),
-%%  ct:log("~nUrl is: ~p~n",[Url]),
-%%  Req = Req = {Url, []},
-%%  {ok, {{_, 200 = _Code, _}, _, _Res}} = httpc:request(get, Req, [], []).
 
 -spec template(data()) -> list().
 template(Data) ->
@@ -364,6 +378,14 @@ timeout(Data) ->
 -spec wallet(data()) -> binary().
 wallet(Data) ->
   Data#data.wallet.
+
+-spec balance(data()) -> float().
+balance(Data) ->
+  Data#data.balance.
+
+-spec balance(data(), float()) -> data().
+balance(Data, Balance) ->
+  Data#data{ balance = Balance }.
 
 -spec address(data()) -> binary().
 address(Data) ->
@@ -597,16 +619,17 @@ is_nulldata(Obj) ->
 %%account(#{ <<"vin">> := [#{ <<"txinwitness">> := [_, Res]}] }) ->
 %%  Res.
 
--spec payload(map()) -> binary().
-payload(Obj) ->
-  Outputs = maps:get(<<"vout">>, Obj),
-  [Res] = [Hex || #{ <<"scriptPubKey">> := #{ <<"hex">> := Hex, <<"type">> := T} } <- Outputs, T == <<"nulldata">>],
-  Res.
+%%-spec payload(map()) -> binary().
+%%payload(Obj) ->
+%%  Outputs = maps:get(<<"vout">>, Obj),
+%%  [Res] = [Hex || #{ <<"scriptPubKey">> := #{ <<"hex">> := Hex, <<"type">> := T} } <- Outputs, T == <<"nulldata">>],
+%%  Res.
 
 -spec tx(map()) -> tx().
-tx(Obj) ->
+tx(_Obj) ->
 %%  PublicKey = account(Obj),
-  Payload = payload(Obj),
+%%  Payload = payload(Obj),
+  Payload = <<"6a6b685f324a7a4857345a5842314346435a77344a465237535159524246357851357857415172615035486f357434384b4d50554b6e">>,
   aeconnector_tx:test_tx(<<"PublicKey">>, from_hex(Payload)).
 
 -spec to_hex(binary()) -> binary().
@@ -621,5 +644,29 @@ from_hex(HexData) ->
   _Payload = << <<(ToInt(H, L))>> || <<H:8, L:8>> <= HexPayload >>.
 
 %%%===================================================================
-%%%  Data access layer
+%%%  Report preparation
 %%%===================================================================
+-spec compile(data()) -> {ok, atom()}.
+compile(Data) ->
+  File = template(Data),
+  aeconnector_template:compile(File, btc_full_node_telegram).
+
+-spec report(data(), boolean()) -> ok.
+report(Data, Connected) ->
+  Url = webhook(Data), Headers = [], ContentType = "application/json",
+
+  Height = height(Data),
+  Address = address(Data),
+  Balance = aeconnector:amount(balance(Data)),
+  Hash = hash(Data),
+  Info =
+    [
+      {transaction, <<"a663301f6fa2832df8740a688e0db61f04d20a5e66ac655b59226c1870f1a885">>},
+      {amount, <<"0.1">>},
+      {fee, <<"0.01">>},
+      {confirmations, 1}
+    ],
+  Vars = aeconnector_template:vars(Height, Address, Balance, Hash, Connected, Info),
+  {ok, IoList} = aeconnector_template:render(btc_full_node_telegram, Vars),
+  Report = iolist_to_binary(IoList),
+  aeconnector_report:post(Url, Headers, ContentType, Report).

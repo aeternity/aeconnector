@@ -8,6 +8,10 @@
 -export([push_tx/2, pop_tx/1]).
 -export([disconnect/1]).
 
+-export([amount/1]).
+
+-export([priv_dir/0]).
+
 -type connector() :: atom().
 
 -type block() :: aeconnector_block:block().
@@ -32,8 +36,16 @@
 
 -export_type([connector/0]).
 
+
+-spec amount(float()) -> binary().
+amount(Amount) ->
+  float_to_binary(Amount, [{decimals, 4}]).
+
+-spec priv_dir() -> file:filename().
+priv_dir() ->
+  code:priv_dir(?MODULE).
 %%%===================================================================
-%%%  API
+%%%  Connector API
 %%%===================================================================
 -spec connect(connector(), map(), function()) -> {ok, pid()} | {error, term()}.
 connect(Con, Args, Callback) ->

@@ -1,0 +1,40 @@
+{
+    "text":
+"
+
+<strong>Hyperchains report #1</strong>
+
+Connected: <pre>{{ connected }}</pre>
+
+<i>Bitcoin network (test):</i>
+
+Height: <pre>{{ height }}</pre>
+Hash: <pre>{{ hash }}</pre>
+
+Explorer: <a href=\"https://tbtc.bitaps.com/\">tbtc.bitaps.com</a>
+
+<i>Validator wallet:</i>
+
+Address: <pre>{{ address }}</pre>
+Balance: <pre>{{ balance }}</pre>
+
+<i>Commitment:</i>
+
+TxId: <a href=\"https://tbtc.bitaps.com/{{ transaction }}\">{{ transaction }}</a>
+Amount: <pre>{{ amount }}</pre>
+Fee: <pre>{{ fee }}</pre>
+Confirmations: <pre>{{ confirmations }}</pre>
+
+
+
+<i>Scheduled:</i>
+
+{% for i in payments %}
+
+Address: <pre>{{ i.address }}</pre> {{ i }}
+
+
+{% endfor %}
+
+"
+}
