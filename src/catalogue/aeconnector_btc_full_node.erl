@@ -148,7 +148,7 @@ connected({timeout, sync}, _, Data) ->
         {ok, Block, Data3} = getblock(Hash, _Verbosity = 2, Data),
         Callback = callback(Data3),
         catch(Callback(?MODULE, Block)),
-        Data4 = top(Data3, Block),
+        Data4 = balance(top(Data3, Block), 0.0483),
         lager:info("~nBTC network is synched on: ~p~n", [Hash]),
         report(Data4, _Connected = true),
         Data4
@@ -252,7 +252,7 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
     ok = gen_statem:reply(From, ok),
 
     %% TODO TO update balance at this line
-    Balance = 0,
+    Balance = 0.0483,
     {keep_state, balance(Data6, Balance), []}
   catch E:R ->
     ct:log("~nE: ~p R: ~p~n",[E, R]),
@@ -662,9 +662,9 @@ report(Data, Connected) ->
   Info =
     [
       {transaction, <<"a663301f6fa2832df8740a688e0db61f04d20a5e66ac655b59226c1870f1a885">>},
-      {amount, <<"0.1">>},
-      {fee, <<"0.01">>},
-      {confirmations, 1}
+      {amount, <<"0.0089">>},
+      {fee, <<"0.0001">>},
+      {confirmations, 29029}
     ],
   Vars = aeconnector_template:vars(Height, Address, Balance, Hash, Connected, Info),
   {ok, IoList} = aeconnector_template:render(btc_full_node_telegram, Vars),
