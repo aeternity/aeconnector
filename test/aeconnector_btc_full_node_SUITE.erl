@@ -7,7 +7,7 @@
 %%% For the "user" role (default)
 %%% 1. Open connection to the network (connect);
 %%% 2. Get the hash of the current best block (get_top_block);
-%%% 3. Fetch the chain from the current best block to the landed entry (genesis);
+%%% 3. Fetch the chain from the current best block to the landed entry (pointer);
 %%% 4. Synchronize the new mined block (a time depends on BTC network: ~8 min) (sync)
 %%% 5. Close connection (disconnect);
 %%% For the "delegate" role
@@ -51,12 +51,12 @@ init_per_suite(Config) ->
   ok = lager:start(),
   %% TODO: This data should be externally configured!
   Payload = <<"kh_Z6MucDvCV1HbgEN91QY6Hn6exY58v7oKp9uk2jatLVVusLdWL">>,
-  Genesis = <<"0000000046eac05f2f5bd64f29da6e8482c8928edd6edbf2ba4378f5f263a0a9">>,
+  Pointer = <<"0000000046eac05f2f5bd64f29da6e8482c8928edd6edbf2ba4378f5f263a0a9">>,
   ReturnAddress = ?MODULE,
   Setup =
     [
       {payload, Payload},
-      {genesis, Genesis},
+      {pointer, Pointer},
       {return_address, ReturnAddress}
     ],
   lists:append(Setup, Config).
@@ -174,8 +174,8 @@ get_top_block(_Config) ->
   {comment, Hash}.
 
 get_block_by_hash(Config) ->
-  Hash = ?config(genesis, Config),
-  {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
+  Pointer = ?config(pointer, Config),
+  {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Pointer),
   true = aeconnector_block:is_block(Block),
   {comment, Block}.
 
@@ -183,15 +183,15 @@ fetch(Config) -> ok.
 
 %%fetch(Config) ->
 %%  {ok, Top} = aeconnector:get_top_block(btc_conncetor()),
-%%  Genesis = ?config(genesis, Config),
+%%  Pointer = ?config(pointer, Config),
 %%
 %%  fun Fetch(Hash) ->
 %%    {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
 %%    ct:log("~nThe fecthed block: ~p~n",[Block]),
 %%    PrevHash = aeconnector_block:prev_hash(Block),
-%%    (Hash == Genesis) orelse Fetch(PrevHash)
+%%    (Hash == Pointer) orelse Fetch(PrevHash)
 %%  end(Top),
-%%  {comment, {Top, Genesis}}.
+%%  {comment, {Top, Pointer}}.
 
 synchronize(Config) ->
   ReturnAddress = ?config(return_address, Config),

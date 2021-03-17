@@ -6,9 +6,6 @@
 %%% @end
 -module(aeconnector_offline).
 
-%% API
--export([]).
-
 -behaviour(aeconnector).
 -behaviour(gen_statem).
 
@@ -42,20 +39,18 @@
 -spec compile(data(), script()) -> data().
 compile(Data, Script) ->
   Commands = queue:new(), Data2 = commands(Data, Commands),
-  I = maps:iterator(Script), Next = maps:next(I),
 
-  next(script(Data2, Script), Next).
+  next(script(Data2, Script), Script).
 
--spec next(data(), none | {binary(), term(), term()}) -> data().
-next(Data, none) ->
+-spec next(data(), [map()]) -> data().
+next(Data, []) ->
   Data;
-next(Data, {<<"block">>, Value, Iterator}) ->
+next(Data, [#{<<"block">> := Value}|T]) ->
   BlockTime = maps:get(<<"blocktime">>, Value),
-  Command = {{timeout, <<"block">>}, BlockTime * 1000, Value},
-
-  Data2 = in(Data, Command), next(Data2, maps:next(Iterator));
-next(Data, {_Key, _Value, Iterator}) ->
-  next(Data, maps:next(Iterator)).
+  Command = {{timeout, <<"block">>}, BlockTime * 1000, Value}, Data2 = in(Data, Command),
+  next(Data2, T);
+next(Data, [I|T]) ->
+  next(Data, T).
 
 %%%===================================================================
 %%%  aeconnector behaviour
@@ -133,11 +128,18 @@ played(enter, _OldState, Data) ->
 
 played({timeout, <<"block">>}, EventContent, Data) ->
   Block = block(EventContent),
-  Pool = pool(Data), Txs = lists:append(Pool, aeconnector_block:txs(Block)),
+  Pool = pool(Data), Stack = stack(Data),
+  Txs = lists:append(Pool, aeconnector_block:txs(Block)),
   MinedBlock = aeconnector_block:txs(Block, Txs),
   Callback = callback(Data), catch(Callback(?MODULE, MinedBlock)),
 
-  {keep_state, Data, []};
+  Data2 = stack(pool(Data, []), [Block|Stack]),
+  case out(Data2) of
+    {{value, Command}, Data3} ->
+      {keep_state, Data3, [Command]};
+    {empty, Data3} ->
+      {next_state, stopped, Data3}
+  end;
 
 played({call, From}, {get_top_block}, Data) ->
   [Top|_] = stack(Data), Hash  = aeconnector_block:hash(Top),
@@ -203,9 +205,8 @@ args(Data, Args) ->
   Priv = aeconnector:priv_dir(),
   Def = filename:join(Priv, "offline.yaml"),
 
-  Path = maps:get(<<"script">>, Args, Def),
-
-  Data#data{ script = file(Path, _Schema = []) }.
+  Path = maps:get(<<"script">>, Args, Def), {ok, Script} = file(Path, _Schema = []),
+  Data#data{ script = Script }.
 
 -spec pool(data()) -> [tx()].
 pool(Data) ->
@@ -276,7 +277,7 @@ len(Data) ->
 block(Obj) ->
   Hash = maps:get(<<"hash">>, Obj), PrevHash = maps:get(<<"prev">>, Obj),
   Height = maps:get(<<"height">>, Obj),
-  Txs = [tx(Tx)||Tx <- maps:get(<<"tx">>, Obj)],
+  Txs = [tx(Tx)||Tx <- maps:get(<<"txs">>, Obj)],
 
   aeconnector_block:block(Height, Hash, PrevHash, Txs).
 
@@ -291,8 +292,8 @@ tx(Obj) ->
 %%%  Filesystem
 %%%===================================================================
 
--spec file(Path::path(), Schema::[term()]) ->
-  success(script()) | failure(term(), term()).
+-spec file(list(), [term()]) ->
+  {ok, script()} | {error, term(), term()}.
 file(Path, _Schema) ->
   try
     Opt = [{str_node_as_binary, true}, {map_node_format, map}],
