@@ -36,21 +36,37 @@
 %%% Script processing
 %%%===================================================================
 
--spec compile(data(), script()) -> data().
-compile(Data, Script) ->
+-spec setup(data(), script()) -> data().
+setup(Data, Script) ->
   Commands = queue:new(), Data2 = commands(Data, Commands),
 
-  next(script(Data2, Script), Script).
+  Iterator = maps:iterator(Script),
 
--spec next(data(), [map()]) -> data().
-next(Data, []) ->
+  next(script(Data2, Script), maps:next(Iterator)).
+
+-spec next(data(), none | {binary(), term(), term()}) -> data().
+next(Data, none) ->
   Data;
-next(Data, [#{<<"block">> := Value}|T]) ->
-  BlockTime = maps:get(<<"blocktime">>, Value),
-  Command = {{timeout, <<"block">>}, BlockTime * 1000, Value}, Data2 = in(Data, Command),
-  next(Data2, T);
-next(Data, [I|T]) ->
-  next(Data, T).
+next(Data, {<<"play">>, Value, Iterator}) ->
+  Data2 = lists:foldl(fun play/2, Data, Value),
+
+  next(Data2, maps:next(Iterator));
+next(Data, {<<"record">>, Value, Iterator}) ->
+  Log = lists:reverse(Value),
+  Data2 = lists:foldl(fun record/2, Data, Log),
+
+  next(Data2, maps:next(Iterator));
+next(Data, {_, _, Iterator}) ->
+  next(Data, maps:next(Iterator)).
+
+play(Content, Data) ->
+  BlockTime = maps:get(<<"blocktime">>, Content),
+  Block = block(Content),
+  Command = {{timeout, <<"block">>}, BlockTime * 1000, Block}, in(Data, Command).
+
+record(Content, Data) ->
+  Block = block(Content),
+  Stack = stack(Data), stack(Data, [Block|Stack]).
 
 %%%===================================================================
 %%%  aeconnector behaviour
@@ -106,7 +122,7 @@ disconnect() ->
 
 init(Data) ->
   Script = script(Data),
-  Data2 = compile(Data, Script),
+  Data2 = setup(Data, Script),
 
   {{value, Command}, Data3} = out(Data2),
   {ok, played, Data3, [Command]}.
@@ -126,8 +142,7 @@ played(enter, _OldState, Data) ->
 
   {keep_state, Data, []};
 
-played({timeout, <<"block">>}, EventContent, Data) ->
-  Block = block(EventContent),
+played({timeout, <<"block">>}, Block, Data) ->
   Pool = pool(Data), Stack = stack(Data),
   Txs = lists:append(Pool, aeconnector_block:txs(Block)),
   MinedBlock = aeconnector_block:txs(Block, Txs),

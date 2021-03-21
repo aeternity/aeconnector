@@ -35,7 +35,7 @@ init_per_suite(Config) ->
   ok = lager:start(),
   ok = application:start(yamerl),
   Payload = <<"kh_Z6MucDvCV1HbgEN91QY6Hn6exY58v7oKp9uk2jatLVVusLdWL">>,
-  Pointer = <<"0000000000000002e58b1a45bd6ca81d2b63c2f142eb167c174f0f5c1c294e06">>,
+  Pointer = <<"0000000000000001d8d2952308de99c312382fb78ab5a3edb2cd17ce59987cc5">>,
   Setup =
     [
       {payload, Payload},
@@ -63,7 +63,7 @@ groups() ->
   [].
 
 all() ->
-  [connect, dry_send_tx, send_tx, synchronize, get_top_block, get_block_by_hash, disconnect].
+  [connect, dry_send_tx, send_tx, get_top_block, synchronize, get_block_by_hash, disconnect].
 
 %%--------------------------------------------------------------------
 %% TEST CASES
