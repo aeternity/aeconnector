@@ -481,7 +481,7 @@ request(Path, Method, Params, Data) ->
         {"Authorization", lists:concat(["Basic ", Auth])}
       ],
     Req = {Url, Headers, "application/json", Body},
-    HTTPOpt = [{timeout, timeout(Data)}],
+    HTTPOpt = [{timeout, timeout(Data), {ipfamily, inet}}],
     Opt = [],
     {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
     lager:info("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
