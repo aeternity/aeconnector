@@ -42,4 +42,3 @@ compile(File, Template) ->
 -spec render(template(), [term()]) -> {ok, binary()}.
 render(Template, Vars) ->
   {ok, _IoList} = Template:render(Vars).
-

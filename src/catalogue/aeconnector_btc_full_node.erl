@@ -119,7 +119,8 @@ init(Data) ->
     lager:info("~nBTC network info: ~p~n", [Info]),
     SyncTimeOut = {{timeout, sync}, 0, _EventContent = []},
     {ok, connected, Data2, [SyncTimeOut]}
-  catch _E:_R ->
+  catch E:R:S ->
+    lager:info("~nBTC network crash: ~p ~p ~p~n", [E, R, S]),
     ConnectTimeOut = {state_timeout, 1000, connect},
     {ok, disconnected, Data, [ConnectTimeOut]}
   end.
@@ -262,7 +263,7 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
 
 disconnected(enter, _OldState, Data) ->
   %% TODO Announce http callback
-  report(Data, _Connected = false),
+%%  report(Data, _Connected = false),
   {keep_state, Data};
 
 disconnected(state_timeout, _, Data) ->
@@ -483,10 +484,10 @@ request(Path, Method, Params, Data) ->
     HTTPOpt = [{timeout, timeout(Data)}],
     Opt = [],
     {ok, {{_, 200 = _Code, _}, _, Res}} = httpc:request(post, Req, HTTPOpt, Opt),
-    lager:debug("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
+    lager:info("Req: ~p, Res: ~p with URL: ~ts", [Req, Res, Url]),
     {ok, jsx:decode(list_to_binary(Res), [return_maps]), DataUp}
   catch E:R:S ->
-    lager:error("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
+    lager:info("Error: ~p Reason: ~p Stacktrace: ~p", [E, R, S]),
     {error, {E, R, S}, DataUp}
   end.
 
