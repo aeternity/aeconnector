@@ -292,12 +292,13 @@ args(Data, Args) ->
   Password = maps:get(<<"password">>, Args),
   Host = maps:get(<<"host">>, Args, <<"127.0.0.1">>),
   Port = maps:get(<<"port">>, Args, 8332),
+  SSL = maps:get(<<"ssl">>, Args, false),
   Wallet = maps:get(<<"wallet">>, Args),
   Address = maps:get(<<"address">>, Args),
   PrivateKey = maps:get(<<"privatekey">>, Args),
   Amount = maps:get(<<"amount">>, Args),
 
-  URL = path(binary_to_list(Host), Port),
+  URL = url(binary_to_list(Host), Port, SSL),
   Auth = auth(binary_to_list(User), binary_to_list(Password)),
   Serial = 0,
   Seed = erlang:md5(term_to_binary({Serial, node(), make_ref()})),
@@ -458,8 +459,13 @@ in(Data, Item) ->
 %%%===================================================================
 %%%  HTTP protocol
 %%%===================================================================
-path(Host, Port) ->
-  lists:concat([Host, ":", Port]).
+url(Host, Port, true = _SSL) when is_list(Host), is_integer(Port) ->
+  path("https://", Host, Port);
+url(Host, Port, _) when is_list(Host), is_integer(Port) ->
+  path("http://", Host, Port).
+
+path(Scheme, Host, Port) ->
+  lists:concat([Scheme, Host, ":", Port]).
 
 -spec request(binary(), binary(), list(), data()) -> {ok, map(), data()} | {error, term(), data()}.
 request(Path, Method, Params, Data) ->
