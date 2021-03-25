@@ -148,7 +148,7 @@ connect(Config) ->
   Args = #{
     <<"user">> => <<"hyperchains">>,
     <<"password">> => <<"qwerty">>,
-    <<"host">> => <<"127.0.0.1">>,
+    <<"host">> => <<"http://127.0.0.1">>,
     <<"port">> => 8332,
     <<"ssl">> => false,
     <<"timeout">> => 30000,
