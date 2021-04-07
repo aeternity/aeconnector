@@ -2,7 +2,7 @@
 %%%-------------------------------------------------------------------
 %%% @copyright (C) 2020, Aeternity Anstalt
 %%% @doc
-%%% https://en.wikipedia.org/wiki/Media_control_symbols
+%%% Simple, programmable connector to model parent blockchain behaviour in offline mode
 %%% @end
 -module(aeconnector_offline).
 
@@ -162,7 +162,8 @@ played({call, From}, {get_top_block}, Data) ->
   ok = gen_statem:reply(From, {ok, Hash}),
   {keep_state, Data, []};
 
-played({call, From}, {get_block_by_hash, Hash}, Data) ->
+played({call, From}, {get_block_by_hash, HexHash}, Data) ->
+  Hash = aeconnector:from_hex(HexHash),
   Stack  = stack(Data), Block = lists:keyfind(Hash, aeconnector_block:hash(), Stack),
 
   ok = gen_statem:reply(From, {ok, Block}),
@@ -290,16 +291,18 @@ len(Data) ->
 
 -spec block(map()) -> block().
 block(Obj) ->
-  Hash = maps:get(<<"hash">>, Obj), PrevHash = maps:get(<<"prev">>, Obj),
+  HexHash = maps:get(<<"hash">>, Obj), HexPrevHash = maps:get(<<"prev">>, Obj),
   Height = maps:get(<<"height">>, Obj),
   Txs = [tx(Tx)||Tx <- maps:get(<<"txs">>, Obj)],
 
+  Hash = aeconnector:from_hex(HexHash), PrevHash = aeconnector:from_hex(HexPrevHash),
   aeconnector_block:block(Height, Hash, PrevHash, Txs).
 
 -spec tx(map()) -> tx().
 tx(Obj) ->
-  Account = maps:get(<<"account">>, Obj),
+  HexAccount = maps:get(<<"account">>, Obj),
   Payload = maps:get(<<"payload">>, Obj),
+  Account = aeconnector:from_hex(HexAccount),
 
   aeconnector_tx:test_tx(Account, Payload).
 

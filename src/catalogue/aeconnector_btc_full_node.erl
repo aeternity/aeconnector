@@ -157,13 +157,14 @@ connected({timeout, sync}, _, Data) ->
   {keep_state, Data5, [{{timeout, sync}, 1000, _EventContent = []}]};
 
 connected({call, From}, {get_top_block}, Data) ->
-  {ok, Hash, Data2} = getbestblockhash(Data),
+  {ok, HexHash, Data2} = getbestblockhash(Data), Hash = aeconnector:from_hex(HexHash),
 
   ok = gen_statem:reply(From, {ok, Hash}),
   {keep_state, Data2, []};
 
 connected({call, From}, {get_block_by_hash, Hash}, Data) ->
-  {ok, Block, Data2} = getblock(Hash, _Verbosity = 2, Data),
+  HexHash = aeconnector:to_hex(Hash),
+  {ok, Block, Data2} = getblock(HexHash, _Verbosity = 2, Data),
   Reply = Block,
   ok = gen_statem:reply(From, {ok, Reply}),
   {keep_state, Data2, []};
@@ -191,7 +192,6 @@ connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
   Address = address(Data),
   Amount = amount(Data),
   {ok, Listunspent, Data2} = listunspent(MinConf, MaxConf, [Address], true, #{ <<"minimumAmount">> => Amount }, Data),
-  ct:log("~nListunspent is: ~p~n",[Listunspent]),
   ok = gen_statem:reply(From, Listunspent /= []),
   {keep_state, Data2, []};
 
@@ -212,9 +212,9 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
     %% b) txid from the Input;
     %% c) vout is set to 0 accordingly to unspendable protocol for null data tx'ss;
     %% d) Payload is encoded into hex format;
-    HexData = to_hex(Payload),
+    HexPayload = aeconnector:to_hex(Payload),
     Inputs = [#{<<"txid">> => TxId, <<"vout">> => Vout}],
-    Outputs = #{<<"data">> => HexData},
+    Outputs = #{<<"data">> => HexPayload},
     %% NOTE:
     %% The payment address is made from queued specification (otherwise the same input is used)
     {Out, Data3} = out(Data2),
@@ -256,7 +256,6 @@ connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
     Balance = 0.0483,
     {keep_state, balance(Data6, Balance), []}
   catch E:R ->
-    ct:log("~nE: ~p R: ~p~n",[E, R]),
     ok = gen_statem:reply(From, {error, {E, R}}),
     {keep_state, Data2, []}
   end.
@@ -571,7 +570,6 @@ signrawtransactionwithkey(RawTx, Data) ->
   try
     PrivKey = privatekey(Data),
     {ok, Res, Data2} = request(<<"/">>, <<"signrawtransactionwithkey">>, [RawTx, [PrivKey]], Data),
-    ct:log("~nsignrawtransactionwithkey res: ~p~n",[Res]),
     SignedTx = result(Res),
     Complete = maps:get(<<"complete">>, SignedTx), true = Complete,
     Hex = maps:get(<<"hex">>, SignedTx),
@@ -596,12 +594,15 @@ result(Response) ->
 
 -spec block(map()) -> block().
 block(Obj) ->
-  Hash = maps:get(<<"hash">>, Obj), true = is_binary(Hash),
+  HexHash = maps:get(<<"hash">>, Obj), true = is_binary(HexHash),
   Height = maps:get(<<"height">>, Obj), true = is_integer(Height),
-  PrevHash = maps:get(<<"previousblockhash">>, Obj), true = is_binary(PrevHash),
+  HexPrevHash = maps:get(<<"previousblockhash">>, Obj), true = is_binary(HexPrevHash),
+
   %% TODO: To analyze the size field;
   FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) end, maps:get(<<"tx">>, Obj)),
   Txs = [tx(Tx)||Tx <- FilteredTxs],
+
+  Hash = aeconnector:from_hex(HexHash), PrevHash = aeconnector:from_hex(HexPrevHash),
   aeconnector_block:block(Height, Hash, PrevHash, Txs).
 
 -spec is_nulldata(map()) -> boolean().
@@ -630,19 +631,11 @@ is_nulldata(Obj) ->
 tx(_Obj) ->
 %%  PublicKey = account(Obj),
 %%  Payload = payload(Obj),
-  Payload = <<"6a6b685f324a7a4857345a5842314346435a77344a465237535159524246357851357857415172615035486f357434384b4d50554b6e">>,
-  aeconnector_tx:test_tx(<<"PublicKey">>, from_hex(Payload)).
+  HexPubKey = <<"0014c0be2b090aab44c79d0883c8f3bc5d32afbcc9a7">>,
+  <<"6a", HexPayload/binary>>= <<"6a6b685f324a7a4857345a5842314346435a77344a465237535159524246357851357857415172615035486f357434384b4d50554b6e">>,
 
--spec to_hex(binary()) -> binary().
-to_hex(Payload) ->
-  ToHex = fun (X) -> integer_to_binary(X,16) end,
-  _HexData = << <<(ToHex(X))/binary>> || <<X:4>> <= Payload >>.
-
--spec from_hex(binary()) -> binary().
-from_hex(HexData) ->
-  <<"6a", HexPayload/binary>> = HexData,
-  ToInt = fun (H, L) -> binary_to_integer(<<H, L>>,16) end,
-  _Payload = << <<(ToInt(H, L))>> || <<H:8, L:8>> <= HexPayload >>.
+  PubKey = aeconnector:from_hex(HexPubKey), Payload = aeconnector:from_hex(HexPayload),
+  aeconnector_tx:test_tx(PubKey, Payload).
 
 %%%===================================================================
 %%%  Report preparation

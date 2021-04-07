@@ -174,7 +174,9 @@ get_top_block(_Config) ->
   {comment, Hash}.
 
 get_block_by_hash(Config) ->
-  Pointer = ?config(pointer, Config),
+  HexPointer = ?config(pointer, Config),
+
+  Pointer = aeconnector:from_hex(HexPointer),
   {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Pointer),
   true = aeconnector_block:is_block(Block),
   {comment, Block}.
@@ -186,7 +188,7 @@ fetch(Config) -> ok.
 %%  Pointer = ?config(pointer, Config),
 %%
 %%  fun Fetch(Hash) ->
-%%    {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Hash),
+%%    {ok, Block} = aeconnector:get_block_by_hash(btc_conncetor(), Pointer),
 %%    ct:log("~nThe fecthed block: ~p~n",[Block]),
 %%    PrevHash = aeconnector_block:prev_hash(Block),
 %%    (Hash == Pointer) orelse Fetch(PrevHash)

@@ -8,9 +8,10 @@
 -export([push_tx/2, pop_tx/1]).
 -export([disconnect/1]).
 
--export([amount/1]).
-
 -export([priv_dir/0]).
+
+-export([amount/1]).
+-export([to_hex/1, from_hex/1]).
 
 -type connector() :: atom().
 
@@ -36,14 +37,24 @@
 
 -export_type([connector/0]).
 
+-spec priv_dir() -> file:filename().
+priv_dir() ->
+  code:priv_dir(?MODULE).
 
 -spec amount(float()) -> binary().
 amount(Amount) ->
   float_to_binary(Amount, [{decimals, 4}]).
 
--spec priv_dir() -> file:filename().
-priv_dir() ->
-  code:priv_dir(?MODULE).
+-spec to_hex(binary()) -> binary().
+to_hex(Payload) ->
+  ToHex = fun (X) -> integer_to_binary(X,16) end,
+  _HexData = << <<(ToHex(X))/binary>> || <<X:4>> <= Payload >>.
+
+-spec from_hex(binary()) -> binary().
+from_hex(HexData) ->
+  ToInt = fun (H, L) -> binary_to_integer(<<H, L>>,16) end,
+  _Payload = << <<(ToInt(H, L))>> || <<H:8, L:8>> <= HexData >>.
+
 %%%===================================================================
 %%%  Connector API
 %%%===================================================================
