@@ -107,7 +107,9 @@ get_top_block(_Config) ->
   {comment, Hash}.
 
 get_block_by_hash(Config) ->
-  Pointer = ?config(pointer, Config),
+  HexPointer = ?config(pointer, Config),
+
+  Pointer = aeconnector:from_hex(HexPointer),
   {ok, Block} = aeconnector:get_block_by_hash(offline_conncetor(), Pointer),
   true = aeconnector_block:is_block(Block),
   {comment, Block}.

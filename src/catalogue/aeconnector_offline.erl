@@ -162,9 +162,8 @@ played({call, From}, {get_top_block}, Data) ->
   ok = gen_statem:reply(From, {ok, Hash}),
   {keep_state, Data, []};
 
-played({call, From}, {get_block_by_hash, HexHash}, Data) ->
-  Hash = aeconnector:from_hex(HexHash),
-  Stack  = stack(Data), Block = lists:keyfind(Hash, aeconnector_block:hash(), Stack),
+played({call, From}, {get_block_by_hash, Hash}, Data) ->
+  Stack = stack(Data), Block = lists:keyfind(Hash, aeconnector_block:hash(), Stack),
 
   ok = gen_statem:reply(From, {ok, Block}),
   {keep_state, Data, []};
