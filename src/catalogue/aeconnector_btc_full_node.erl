@@ -11,7 +11,7 @@
 
 %% API.
 -export([connect/2]).
--export([send_tx/2, dry_send_tx/2]).
+-export([send_tx/1, dry_send_tx/1]).
 -export([get_top_block/0, get_block_by_hash/1]).
 -export([disconnect/0]).
 
@@ -38,13 +38,13 @@ connect(Args, Callback) when is_map(Args), is_function(Callback) ->
   Data = callback(args(data(), Args), Callback),
   gen_statem:start({local, ?MODULE}, ?MODULE, Data, []).
 
--spec dry_send_tx(binary(), binary()) -> boolean().
-dry_send_tx(Delegate, Payload) ->
-  gen_statem:call(?MODULE, {dry_send_tx, Delegate, Payload}).
+-spec dry_send_tx(binary()) -> boolean().
+dry_send_tx(Payload) ->
+  gen_statem:call(?MODULE, {dry_send_tx, Payload}).
 
--spec send_tx(binary(), binary()) -> ok | {error, term()}.
-send_tx(Delegate, Payload) ->
-  gen_statem:call(?MODULE, {send_tx, Delegate, Payload}).
+-spec send_tx(binary()) -> ok | {error, term()}.
+send_tx(Payload) ->
+  gen_statem:call(?MODULE, {send_tx, Payload}).
 
 -spec get_top_block() -> {ok, binary()} | {error, term()}.
 get_top_block() ->
@@ -186,7 +186,7 @@ connected({call, From}, {pop_tx}, Data) ->
     {keep_state, Data, []}
   end;
 
-connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
+connected({call, From}, {dry_send_tx, _Payload}, Data) ->
   %% NOTE: A number of confirmations has increased to make sure that validator's wallet is ready;
   MinConf = 1, MaxConf = 9999999,
   Address = address(Data),
@@ -195,7 +195,7 @@ connected({call, From}, {dry_send_tx, _Delegate, _Payload}, Data) ->
   ok = gen_statem:reply(From, Listunspent /= []),
   {keep_state, Data2, []};
 
-connected({call, From}, {send_tx, _Delegate, Payload}, Data) ->
+connected({call, From}, {send_tx, Payload}, Data) ->
   %% Min confirmations is lower with idea to support "hot" balance update for validators;
   MinConf = 1, MaxConf = 9999999,
   Address = address(Data),

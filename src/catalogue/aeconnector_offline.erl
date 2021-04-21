@@ -11,7 +11,7 @@
 
 %% API.
 -export([connect/2]).
--export([send_tx/2, dry_send_tx/2]).
+-export([send_tx/1, dry_send_tx/1]).
 -export([get_top_block/0, get_block_by_hash/1]).
 -export([disconnect/0]).
 
@@ -77,13 +77,13 @@ connect(Args, Callback) when is_map(Args), is_function(Callback) ->
   Data = callback(args(data(), Args), Callback),
   gen_statem:start({local, ?MODULE}, ?MODULE, Data, []).
 
--spec dry_send_tx(binary(), binary()) -> boolean().
-dry_send_tx(Delegate, Payload) ->
-  gen_statem:call(?MODULE, {dry_send_tx, Delegate, Payload}).
+-spec dry_send_tx(binary()) -> boolean().
+dry_send_tx(Payload) ->
+  gen_statem:call(?MODULE, {dry_send_tx, Payload}).
 
--spec send_tx(binary(), binary()) -> ok | {error, term()}.
-send_tx(Delegate, Payload) ->
-  gen_statem:call(?MODULE, {send_tx, Delegate, Payload}).
+-spec send_tx(binary()) -> ok | {error, term()}.
+send_tx(Payload) ->
+  gen_statem:call(?MODULE, {send_tx, Payload}).
 
 -spec get_top_block() -> {ok, binary()} | {error, term()}.
 get_top_block() ->
@@ -112,6 +112,7 @@ disconnect() ->
 
 -record(data, {
   callback :: function(),
+  account :: binary(),
   pool :: [tx()],
   stack :: [block()],
   script :: script(),
@@ -168,13 +169,15 @@ played({call, From}, {get_block_by_hash, Hash}, Data) ->
   ok = gen_statem:reply(From, {ok, Block}),
   {keep_state, Data, []};
 
-played({call, From}, {dry_send_tx, Delegate, Payload}, Data) ->
+played({call, From}, {dry_send_tx, Payload}, Data) ->
+  Delegate = account(Data),
   Tx = aeconnector_tx:tx(Delegate, Payload),
 
   ok = gen_statem:reply(From, aeconnector_tx:is_tx(Tx)),
   {keep_state, Data, []};
 
-played({call, From}, {send_tx, Delegate, Payload}, Data) ->
+played({call, From}, {send_tx, Payload}, Data) ->
+  Delegate = account(Data),
   Tx = aeconnector_tx:tx(Delegate, Payload),
   Pool = pool(Data),
   Data2 = pool(Data, [Tx|Pool]),
@@ -221,7 +224,9 @@ args(Data, Args) ->
   Def = filename:join(Priv, "offline.yaml"),
 
   Path = maps:get(<<"script">>, Args, Def), {ok, Script} = file(Path, _Schema = []),
-  Data#data{ script = Script }.
+  Account = maps:get(<<"account">>, Args),
+
+  Data#data{ account = Account, script = Script }.
 
 -spec pool(data()) -> [tx()].
 pool(Data) ->
@@ -246,6 +251,10 @@ script(Data) ->
 -spec script(data(), script()) -> data().
 script(Data, Script) ->
   Data#data{ script = Script }.
+
+-spec account(data()) -> binary().
+account(Data) ->
+  Data#data.account.
 
 -spec callback(data()) -> function().
 callback(Data) ->

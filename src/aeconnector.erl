@@ -4,7 +4,7 @@
 
 -export([connect/3]).
 -export([get_block_by_hash/2, get_top_block/1]).
--export([dry_send_tx/3, send_tx/3]).
+-export([dry_send_tx/2, send_tx/2]).
 -export([push_tx/2, pop_tx/1]).
 -export([disconnect/1]).
 
@@ -15,17 +15,20 @@
 
 -type connector() :: atom().
 
+-type hash() :: binary().
+-type payload() :: binary().
+
 -type block() :: aeconnector_block:block().
 
 -type item() :: aeconnector_schedule:item().
 
 -callback connect(map(), function()) -> {ok, pid()} | {error, term()}.
 
--callback dry_send_tx(binary(), binary()) -> boolean().
--callback send_tx(binary(), binary()) -> ok | {error, term()}.
+-callback dry_send_tx(payload()) -> boolean().
+-callback send_tx(payload()) -> ok | {error, term()}.
 
--callback get_top_block() -> {ok, binary()} | {error, term()}.
--callback get_block_by_hash(binary()) -> {ok, block()} | {error, term()}.
+-callback get_top_block() -> {ok, hash()} | {error, term()}.
+-callback get_block_by_hash(hash()) -> {ok, block()} | {error, term()}.
 
 -callback push_tx(item()) -> ok.
 -callback pop_tx() -> {ok, item()} | {error, term()}.
@@ -67,24 +70,24 @@ connect(Con, Args, Callback) ->
     {error, E, R}
   end.
 
--spec dry_send_tx(connector(), binary(), binary()) -> boolean().
-dry_send_tx(Con, Account, Payload) ->
+-spec dry_send_tx(connector(), payload()) -> boolean().
+dry_send_tx(Con, Payload) ->
   try
-    Res = Con:dry_send_tx(Account, Payload), true = is_boolean(Res),
+    Res = Con:dry_send_tx(Payload), true = is_boolean(Res),
     Res
   catch E:R ->
     {error, {E, R}}
   end.
 
--spec send_tx(connector(), binary(), binary()) -> ok | {error, term()}.
-send_tx(Con, Account, Payload) ->
+-spec send_tx(connector(), payload()) -> ok | {error, term()}.
+send_tx(Con, Payload) ->
   try
-    ok = Con:send_tx(Account, Payload)
+    ok = Con:send_tx(Payload)
   catch E:R ->
     {error, {E, R}}
   end.
 
--spec get_top_block(connector()) -> {ok, binary()} | {error, term()}.
+-spec get_top_block(connector()) -> {ok, hash()} | {error, term()}.
 get_top_block(Con) ->
   try
     Res = {ok, Hash} = Con:get_top_block(), true = is_binary(Hash),
@@ -93,7 +96,7 @@ get_top_block(Con) ->
     {error, {E, R}}
   end.
 
--spec get_block_by_hash(connector(), binary()) -> {ok, block()} | {error, term()}.
+-spec get_block_by_hash(connector(), hash()) -> {ok, block()} | {error, term()}.
 get_block_by_hash(Con, Hash) ->
   try
     Res = {ok, Block} = Con:get_block_by_hash(Hash), true = aeconnector_block:is_block(Block),

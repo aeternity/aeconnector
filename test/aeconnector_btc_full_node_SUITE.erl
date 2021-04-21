@@ -206,7 +206,7 @@ synchronize(Config) ->
 
 dry_send_tx(Config) ->
   Payload = ?config(payload, Config),
-  true = aeconnector:dry_send_tx(btc_conncetor(), <<"TEST">>, Payload),
+  true = aeconnector:dry_send_tx(btc_conncetor(), Payload),
   ok.
 
 push_tx(_Config) ->
@@ -228,7 +228,7 @@ pop_tx(_Config) ->
 
 send_tx(_Config) ->
   Payload = <<"Hyperchains trace">>,
-  [ok = aeconnector:send_tx(btc_conncetor(), <<"TEST">>, Payload) || _ <- lists:seq(0, 0)],
+  [ok = aeconnector:send_tx(btc_conncetor(), Payload) || _ <- lists:seq(0, 0)],
   ok.
 
 disconnect(_Config) ->

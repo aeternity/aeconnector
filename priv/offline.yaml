@@ -1,5 +1,13 @@
 play:
-  - blocktime: 60
+  - blocktime: 30
+    hash: "000000000000000fdc9bab1336076588911902fa58d260b08a1c2f71671d5fd9"
+    prev: "0000000000000001d8d2952308de99c312382fb78ab5a3edb2cd17ce59987cc5"
+    height: 1940475
+    txs:
+      - account: "0014c0be2b090aab44c79d0883c8f3bc5d32afbcc9a7"
+        payload: "none"
+
+  - blocktime: 6
     hash: "0000000000000002e58b1a45bd6ca81d2b63c2f142eb167c174f0f5c1c294e06"
     prev: "000000000000000fdc9bab1336076588911902fa58d260b08a1c2f71671d5fd9"
     height: 1940476
@@ -8,13 +16,6 @@ play:
         payload: "test"
       - account: "0014c0be2b090aab44c79d0883c8f3bc5d32afbcc9a7"
         payload: ""
-  - blocktime: 30
-    hash: "000000000000000fdc9bab1336076588911902fa58d260b08a1c2f71671d5fd9"
-    prev: "0000000000000001d8d2952308de99c312382fb78ab5a3edb2cd17ce59987cc5"
-    height: 1940475
-    txs:
-      - account: "0014c0be2b090aab44c79d0883c8f3bc5d32afbcc9a7"
-        payload: "none"
 
 record:
   - hash: "0000000000000001d8d2952308de99c312382fb78ab5a3edb2cd17ce59987cc5"

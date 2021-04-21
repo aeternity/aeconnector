@@ -72,7 +72,8 @@ all() ->
 connect(Config) ->
   Priv = aeconnector:priv_dir(), Script = filename:join(Priv, "offline.yaml"),
   Args = #{
-    <<"script">> => Script
+    <<"script">> => Script,
+    <<"account">> => <<"0014c0be2b090aab44c79d0883c8f3bc5d32afbcc9a7">>
   },
   ReturnAddress = ?config(return_address, Config),
   Callback =
@@ -84,12 +85,12 @@ connect(Config) ->
 
 dry_send_tx(Config) ->
   Payload = ?config(payload, Config),
-  true = aeconnector:dry_send_tx(offline_conncetor(), <<"TEST">>, Payload),
+  true = aeconnector:dry_send_tx(offline_conncetor(), Payload),
   ok.
 
 send_tx(_Config) ->
   Payload = <<"Hyperchains trace">>,
-  [ok = aeconnector:send_tx(offline_conncetor(), <<"TEST">>, Payload) || _ <- lists:seq(0, 10)],
+  [ok = aeconnector:send_tx(offline_conncetor(), Payload) || _ <- lists:seq(0, 10)],
   ok.
 
 synchronize(Config) ->
