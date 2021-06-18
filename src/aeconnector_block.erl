@@ -48,8 +48,8 @@ txs(Block, Txs) ->
 
 -spec block(Height::non_neg_integer(), Hash::binary(), PrevHash::binary(), Txs::[tx()]) -> block().
 block(Height, Hash, PrevHash, Txs) when
-  is_integer(Height), is_binary(Hash), is_binary(PrevHash), is_list(Txs) ->
-  Block = #block{ height = Height, hash = Hash, prev_hash = PrevHash},
+  is_integer(Height), is_binary(Hash), is_list(Txs) ->
+  Block = #block{ height = Height, hash = Hash, prev_hash = PrevHash },
   txs(Block, Txs).
 
 -spec is_block(term()) -> boolean().
