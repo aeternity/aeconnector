@@ -596,14 +596,23 @@ result(Response) ->
 block(Obj) ->
   HexHash = maps:get(<<"hash">>, Obj), true = is_binary(HexHash),
   Height = maps:get(<<"height">>, Obj), true = is_integer(Height),
-  HexPrevHash = maps:get(<<"previousblockhash">>, Obj, null), true = is_binary(HexPrevHash),
 
   %% TODO: To analyze the size field;
   FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) end, maps:get(<<"tx">>, Obj)),
   Txs = [tx(Tx)||Tx <- FilteredTxs],
 
-  Hash = aeconnector:from_hex(HexHash), PrevHash = aeconnector:from_hex(HexPrevHash),
+  Hash = aeconnector:from_hex(HexHash), PrevHash = prev_hash(Obj),
   aeconnector_block:block(Height, Hash, PrevHash, Txs).
+
+-spec prev_hash(map()) -> null | binary().
+prev_hash(Obj) ->
+  HexPrevHash = maps:get(<<"previousblockhash">>, Obj, null),
+  if is_binary(HexPrevHash) ->
+    PrevHash = aeconnector:from_hex(HexPrevHash),
+    PrevHash;
+    true ->
+      null
+  end.
 
 -spec is_nulldata(map()) -> boolean().
 is_nulldata(Obj) ->
