@@ -16,7 +16,7 @@
 
 -type tx() ::aeconnector_tx:tx().
 
--record(block, { hash::binary(), prev_hash::binary(), height::binary(), txs::[tx()] }).
+-record(block, { hash::binary(), prev_hash::binary() |  null, height::binary(), txs::[tx()] }).
 
 -type block() :: #block{}.
 

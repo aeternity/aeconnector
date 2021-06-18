@@ -596,7 +596,7 @@ result(Response) ->
 block(Obj) ->
   HexHash = maps:get(<<"hash">>, Obj), true = is_binary(HexHash),
   Height = maps:get(<<"height">>, Obj), true = is_integer(Height),
-  HexPrevHash = maps:get(<<"previousblockhash">>, Obj), true = is_binary(HexPrevHash),
+  HexPrevHash = maps:get(<<"previousblockhash">>, Obj, null), true = is_binary(HexPrevHash),
 
   %% TODO: To analyze the size field;
   FilteredTxs = lists:filter(fun (Tx) -> is_nulldata(Tx) end, maps:get(<<"tx">>, Obj)),
